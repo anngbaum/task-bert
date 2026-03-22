@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import os
 
@@ -9,6 +10,7 @@ final class ServerManager {
         case starting
         case running
         case failed(String)
+        case needsFullDiskAccess
     }
 
     private(set) var state: State = .stopped
@@ -30,8 +32,33 @@ final class ServerManager {
         return appSupport.appendingPathComponent("OpenSearch")
     }
 
+    /// Attempt to read the iMessage database. The attempt itself triggers macOS
+    /// to add the app to the Full Disk Access list (toggled off) if not already present.
+    var hasFullDiskAccess: Bool {
+        let chatDBURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Messages/chat.db")
+        // Actually try to open the file — this is what triggers macOS to register the app in FDA
+        guard let _ = try? FileHandle(forReadingFrom: chatDBURL) else {
+            return false
+        }
+        return true
+    }
+
+    func openFullDiskAccessSettings() {
+        // macOS Ventura+ deep link to Full Disk Access
+        if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func start() {
         guard state != .running && state != .starting else { return }
+
+        if !hasFullDiskAccess {
+            state = .needsFullDiskAccess
+            return
+        }
+
         state = .starting
 
         // Check if a server is already running on the port (e.g. from npm run serve)
