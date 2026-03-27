@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SearchBarView: View {
-    @Bindable var viewModel: SearchViewModel
+    @ObservedObject var viewModel: SearchViewModel
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -99,13 +99,12 @@ struct SearchBarView: View {
                 }
             }
         }
-        .onKeyPress(.escape) {
+        .onReceive(NotificationCenter.default.publisher(for: .escapeKeyPressed)) { _ in
             if viewModel.showTypeahead {
                 viewModel.dismissTypeahead()
-                return .handled
             }
-            return .ignored
         }
+        .background(EscapeKeyMonitor())
     }
 
     /// Check if the current custom dates still match a preset
@@ -135,7 +134,7 @@ struct SearchBarView: View {
                     viewModel.dismissTypeahead()
                     Task { await viewModel.search() }
                 }
-                .onChange(of: viewModel.query) {
+                .onChange(of: viewModel.query) { _ in
                     viewModel.updateTypeahead()
                 }
 
@@ -270,5 +269,35 @@ struct SearchBarView: View {
         .buttonStyle(.plain)
         .disabled(viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSearching)
         .help("Search")
+    }
+}
+
+// MARK: - Escape key handling (macOS 13 compatible)
+
+extension Notification.Name {
+    static let escapeKeyPressed = Notification.Name("escapeKeyPressed")
+}
+
+struct EscapeKeyMonitor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 { // Escape key
+                NotificationCenter.default.post(name: .escapeKeyPressed, object: nil)
+            }
+            return event
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    class Coordinator {
+        var monitor: Any?
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
     }
 }

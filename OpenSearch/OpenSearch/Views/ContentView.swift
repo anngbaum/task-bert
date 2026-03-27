@@ -17,7 +17,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
-    @State private var viewModel = SearchViewModel()
+    @StateObject private var viewModel = SearchViewModel()
     @State private var selectedTab: AppTab = .search
     @State private var showSettings: Bool = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
@@ -31,56 +31,84 @@ struct ContentView: View {
                         selectedTab = .actions
                     }
                 }
-            } else if viewModel.threadAnchorId != nil {
-                ThreadView(viewModel: viewModel)
             } else {
-                // Top bar: tabs on the left, sync + settings on the right
-                HStack(spacing: 0) {
-                    ForEach(AppTab.allCases) { tab in
-                        tabButton(tab)
+                ZStack {
+                    // Main content — kept alive so scroll position is preserved
+                    VStack(spacing: 0) {
+                        // Top bar: tabs on the left, sync + settings on the right
+                        HStack(spacing: 0) {
+                            ForEach(AppTab.allCases) { tab in
+                                tabButton(tab)
+                            }
+
+                            Spacer()
+
+                            syncButton
+                            settingsButton
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+
+                        Divider()
+
+                        if viewModel.isSyncing {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                Text(viewModel.lastSyncMessage ?? "Sync in progress. Not all of your data has been imported yet.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(Color.accentColor.opacity(0.08))
+                        }
+
+                        // Content for selected tab
+                        switch selectedTab {
+                        case .conversations:
+                            if viewModel.hasApiKey {
+                                ChatMetadataPanelView(viewModel: viewModel)
+                            } else {
+                                apiKeyRequiredView
+                            }
+                        case .actions:
+                            if viewModel.hasApiKey {
+                                ActionsPanelView(viewModel: viewModel)
+                            } else {
+                                apiKeyRequiredView
+                            }
+                        case .search:
+                            SearchBarView(viewModel: viewModel)
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                                .zIndex(1)
+                            ResultsListView(viewModel: viewModel)
+                        }
                     }
+                    .opacity(viewModel.threadAnchorId == nil ? 1 : 0)
+                    .allowsHitTesting(viewModel.threadAnchorId == nil)
 
-                    Spacer()
-
-                    syncButton
-                    settingsButton
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
-                Divider()
-
-                // Content for selected tab
-                switch selectedTab {
-                case .conversations:
-                    if viewModel.hasApiKey {
-                        ChatMetadataPanelView(viewModel: viewModel)
-                    } else {
-                        apiKeyRequiredView
+                    // Thread detail — overlays when active
+                    if viewModel.threadAnchorId != nil {
+                        ThreadView(viewModel: viewModel)
                     }
-                case .actions:
-                    if viewModel.hasApiKey {
-                        ActionsPanelView(viewModel: viewModel)
-                    } else {
-                        apiKeyRequiredView
-                    }
-                case .search:
-                    SearchBarView(viewModel: viewModel)
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                        .zIndex(1)
-                    ResultsListView(viewModel: viewModel)
                 }
             }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView(viewModel: viewModel)
         }
-        .onChange(of: viewModel.hasApiKey) {
-            // If key was just added and we're on a disabled tab placeholder, stay there
+        .onChange(of: viewModel.hasApiKey) { _ in
             // If key was removed and we're on an LLM tab, switch to search
             if !viewModel.hasApiKey && selectedTab != .search {
                 selectedTab = .search
+            }
+        }
+        .onChange(of: viewModel.didCompleteHardReset) { reset in
+            if reset {
+                hasCompletedOnboarding = false
+                viewModel.didCompleteHardReset = false
             }
         }
         .frame(minWidth: 600, minHeight: 400)
@@ -126,8 +154,8 @@ struct ContentView: View {
                 if tab == .conversations && !viewModel.chatMetadata.isEmpty {
                     badgeView(count: viewModel.chatMetadata.count, color: .blue)
                 }
-                if tab == .actions && !viewModel.actions.isEmpty {
-                    badgeView(count: viewModel.actions.count, color: .orange)
+                if tab == .actions && !viewModel.actionItems.isEmpty {
+                    badgeView(count: viewModel.actionItems.count + viewModel.suggestedFollowUps.count, color: .orange)
                 }
             }
             .padding(.horizontal, 10)
@@ -139,6 +167,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .disabled(disabled)
+        .help(disabled ? "Add an API key in Settings to use this feature" : tab.rawValue)
     }
 
     private func badgeView(count: Int, color: Color) -> some View {
@@ -153,18 +182,32 @@ struct ContentView: View {
     }
 
     private var syncButton: some View {
-        Button {
-            Task { await viewModel.sync() }
-        } label: {
+        HStack(spacing: 6) {
             if viewModel.isSyncing {
                 ProgressView()
                     .controlSize(.small)
+                if let message = viewModel.lastSyncMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             } else {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.title3)
+                Menu {
+                    Button("Last 3 days") { Task { await viewModel.sync(days: 3) } }
+                    Button("Last 7 days") { Task { await viewModel.sync(days: 7) } }
+                    Button("Last 14 days") { Task { await viewModel.sync(days: 14) } }
+                    Button("Last 30 days") { Task { await viewModel.sync(days: 30) } }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.title3)
+                } primaryAction: {
+                    Task { await viewModel.sync() }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
-        .buttonStyle(.plain)
         .disabled(viewModel.isSyncing)
         .help(viewModel.syncTooltip)
         .padding(.trailing, 8)
@@ -185,7 +228,7 @@ struct ContentView: View {
 // MARK: - Onboarding
 
 struct OnboardingView: View {
-    @Bindable var viewModel: SearchViewModel
+    @ObservedObject var viewModel: SearchViewModel
     let onComplete: () -> Void
 
     @State private var anthropicKeyInput: String = ""

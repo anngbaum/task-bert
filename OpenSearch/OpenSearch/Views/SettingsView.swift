@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @Bindable var viewModel: SearchViewModel
+    @ObservedObject var viewModel: SearchViewModel
     @Environment(\.dismiss) private var dismiss
 
     @State private var anthropicKeyInput: String = ""
@@ -13,6 +13,8 @@ struct SettingsView: View {
     @State private var isSaving: Bool = false
     @State private var isLoading: Bool = true
     @State private var statusMessage: String? = nil
+    @State private var showDebugLogs: Bool = false
+    @State private var showHardResetConfirm: Bool = false
 
     private var availableModels: [SearchService.ModelOption] {
         models.filter { $0.available }
@@ -53,6 +55,31 @@ struct SettingsView: View {
                     Divider()
 
                     modelPicker
+
+                    Divider()
+
+                    HStack {
+                        Button {
+                            showDebugLogs = true
+                        } label: {
+                            Label("Server Logs", systemImage: "terminal")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+
+                        Spacer()
+
+                        Button(role: .destructive) {
+                            showHardResetConfirm = true
+                        } label: {
+                            Label("Hard Reset", systemImage: "arrow.counterclockwise.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
+                        .font(.subheadline)
+                        .disabled(viewModel.isSyncing)
+                    }
                 }
 
                 if let status = statusMessage {
@@ -78,8 +105,22 @@ struct SettingsView: View {
             }
         }
         .padding(20)
-        .frame(width: 460, height: 400)
+        .frame(width: 460, height: 440)
         .task { await loadSettings() }
+        .sheet(isPresented: $showDebugLogs) {
+            DebugLogsView(viewModel: viewModel)
+        }
+        .alert("Hard Reset", isPresented: $showHardResetConfirm) {
+            Button("Reset", role: .destructive) {
+                Task {
+                    dismiss()
+                    await viewModel.hardReset()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will wipe the local database and re-import everything from scratch. This may take several minutes.")
+        }
     }
 
     private func apiKeySection(

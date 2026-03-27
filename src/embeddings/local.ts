@@ -1,4 +1,10 @@
-import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
+import path from 'path';
+import { env, pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
+import { DATA_DIR } from '../config.js';
+
+// Point the HF transformers cache to the writable data directory
+// so it doesn't try to write inside the (read-only) app bundle.
+env.cacheDir = path.join(DATA_DIR, 'models');
 
 const MODEL_ID = 'nomic-ai/nomic-embed-text-v1.5';
 
@@ -8,6 +14,7 @@ async function getEmbedder(): Promise<FeatureExtractionPipeline> {
   if (!embedder) {
     embedder = await (pipeline as Function)('feature-extraction', MODEL_ID, {
       dtype: 'q8',
+      cache_dir: path.join(DATA_DIR, 'models'),
     }) as FeatureExtractionPipeline;
   }
   return embedder;

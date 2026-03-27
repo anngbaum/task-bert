@@ -33,9 +33,24 @@ actor SearchService {
     }()
 
     struct SyncResponse: Decodable {
-        let messagesAdded: Int
-        let handlesAdded: Int
-        let lastSynced: String
+        let messagesAdded: Int?
+        let handlesAdded: Int?
+        let lastSynced: String?
+        let started: Bool?
+        let hardReset: Bool?
+    }
+
+    struct HealthProgress: Decodable {
+        let stage: String
+        let detail: String
+        let percent: Double
+    }
+
+    struct HealthResponse: Decodable {
+        let status: String
+        let ready: Bool
+        let syncing: Bool
+        let progress: HealthProgress?
     }
 
     struct ContactsResponse: Decodable {
@@ -126,17 +141,32 @@ actor SearchService {
         return groupsResponse.groups
     }
 
-    func sync() async throws -> SyncResponse {
-        let url = baseURL.appendingPathComponent("api/sync")
-        var request = URLRequest(url: url)
+    func sync(days: Int = 7, hardReset: Bool = false) async throws -> SyncResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/sync"), resolvingAgainstBaseURL: false)!
+        var queryItems = [URLQueryItem(name: "days", value: String(days))]
+        if hardReset {
+            queryItems.append(URLQueryItem(name: "hardReset", value: "true"))
+        }
+        components.queryItems = queryItems
+        var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 300 // Sync can take minutes (ETL + embed + metadata)
+        request.timeoutInterval = 600 // Hard reset can take longer
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
         }
         return try decoder.decode(SyncResponse.self, from: data)
+    }
+
+    func fetchHealth() async throws -> HealthResponse {
+        let url = baseURL.appendingPathComponent("health")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+        return try decoder.decode(HealthResponse.self, from: data)
     }
 
     func fetchThread(
@@ -200,11 +230,28 @@ actor SearchService {
     }
 
     struct ActionsResponse: Decodable {
-        let actions: [ActionItem]
+        let key_events: [KeyEvent]
+        let suggested_follow_ups: [SuggestedFollowUp]
+        let action_items: [ActionItem]
     }
 
-    func completeAction(id: Int) async throws {
+    func completeAction(id: Int, type: String = "action_item") async throws {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/actions/complete"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "id", value: String(id)),
+            URLQueryItem(name: "type", value: type),
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+    }
+
+    func deleteEvent(id: Int) async throws {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/events/delete"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "id", value: String(id))]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
@@ -215,7 +262,7 @@ actor SearchService {
         }
     }
 
-    func fetchActions(includeCompleted: Bool = false) async throws -> [ActionItem] {
+    func fetchActions(includeCompleted: Bool = false) async throws -> ActionsResponse {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/actions"), resolvingAgainstBaseURL: false)!
         if includeCompleted {
             components.queryItems = [URLQueryItem(name: "completed", value: "true")]
@@ -225,7 +272,7 @@ actor SearchService {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
         }
-        return try decoder.decode(ActionsResponse.self, from: data).actions
+        return try decoder.decode(ActionsResponse.self, from: data)
     }
 
     struct SettingsResponse: Decodable {
@@ -276,6 +323,31 @@ actor SearchService {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
         }
+    }
+
+    // MARK: - Debug Logs
+
+    struct LogEntry: Decodable, Identifiable {
+        let ts: String
+        let level: String
+        let message: String
+
+        var id: String { "\(ts)-\(message.prefix(40))" }
+    }
+
+    private struct LogsResponse: Decodable {
+        let logs: [LogEntry]
+    }
+
+    func fetchLogs(limit: Int = 200) async throws -> [LogEntry] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/logs"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+        return try decoder.decode(LogsResponse.self, from: data).logs
     }
 
     func fetchContext(messageId: Int, before: Int = 3, after: Int = 10) async throws -> [ContextMessage] {

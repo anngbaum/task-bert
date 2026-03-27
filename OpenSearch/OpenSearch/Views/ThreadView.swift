@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ThreadView: View {
-    @Bindable var viewModel: SearchViewModel
+    @ObservedObject var viewModel: SearchViewModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,7 +83,19 @@ struct ThreadView: View {
             }
             .listStyle(.plain)
             .onAppear {
-                proxy.scrollTo(response.anchor_message_id, anchor: .center)
+                // Delay slightly to let List finish layout before scrolling
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(response.anchor_message_id, anchor: .center)
+                    }
+                }
+            }
+            .onChange(of: response.anchor_message_id) { newAnchor in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(newAnchor, anchor: .center)
+                    }
+                }
             }
         }
     }

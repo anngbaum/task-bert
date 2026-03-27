@@ -40,18 +40,24 @@ let openaiClientKey: string | undefined = undefined;
 
 function getAnthropicClient(apiKey?: string): Anthropic {
   const key = apiKey || undefined;
+  if (!key) {
+    throw new Error('Anthropic API key is not configured. Add one in Settings.');
+  }
   if (!anthropicClient || key !== anthropicClientKey) {
     anthropicClientKey = key;
-    anthropicClient = new Anthropic(key ? { apiKey: key } : undefined);
+    anthropicClient = new Anthropic({ apiKey: key });
   }
   return anthropicClient;
 }
 
 function getOpenAIClient(apiKey?: string): OpenAI {
   const key = apiKey || undefined;
+  if (!key) {
+    throw new Error('OpenAI API key is not configured. Add one in Settings.');
+  }
   if (!openaiClient || key !== openaiClientKey) {
     openaiClientKey = key;
-    openaiClient = new OpenAI(key ? { apiKey: key } : undefined);
+    openaiClient = new OpenAI({ apiKey: key });
   }
   return openaiClient;
 }
@@ -129,16 +135,21 @@ async function callOpenAI(input: string, model: string, apiKey?: string): Promis
  * Call the appropriate LLM provider based on model selection.
  * Shared by query parsing, metadata, and action extraction.
  */
-export async function callLLM(
+const MAX_RETRIES = 5;
+const INITIAL_BACKOFF_MS = 1000;
+
+async function callLLMOnce(
   config: LLMConfig,
   system: string,
   userMessage: string,
-  maxTokens: number = 512
+  maxTokens: number,
+  model: string
 ): Promise<string> {
-  const model = config.model ?? 'claude-haiku-4-5-20251001';
   const provider = getModelProvider(model);
 
   if (provider === 'openai') {
+    const hasKey = !!config.openaiApiKey;
+    console.log(`[llm] Calling ${model} (provider: openai, key present: ${hasKey})`);
     const client = getOpenAIClient(config.openaiApiKey);
     const response = await client.chat.completions.create({
       model,
@@ -150,6 +161,8 @@ export async function callLLM(
     });
     return response.choices[0]?.message?.content ?? '';
   } else {
+    const hasKey = !!config.anthropicApiKey;
+    console.log(`[llm] Calling ${model} (provider: anthropic, key present: ${hasKey})`);
     const client = getAnthropicClient(config.anthropicApiKey);
     const response = await client.messages.create({
       model,
@@ -159,6 +172,40 @@ export async function callLLM(
     });
     return response.content[0].type === 'text' ? response.content[0].text : '';
   }
+}
+
+function isRetryableError(err: unknown): boolean {
+  if (err && typeof err === 'object') {
+    const status = (err as any).status ?? (err as any).statusCode ?? (err as any).code;
+    if (status === 429 || status === 529 || status === 503 || status === 500) return true;
+    const msg = (err as any).message ?? '';
+    if (typeof msg === 'string' && (msg.includes('429') || msg.includes('rate') || msg.includes('overloaded'))) return true;
+  }
+  return false;
+}
+
+export async function callLLM(
+  config: LLMConfig,
+  system: string,
+  userMessage: string,
+  maxTokens: number = 512
+): Promise<string> {
+  const model = config.model ?? 'claude-haiku-4-5-20251001';
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await callLLMOnce(config, system, userMessage, maxTokens, model);
+    } catch (err) {
+      if (attempt < MAX_RETRIES && isRetryableError(err)) {
+        const backoff = INITIAL_BACKOFF_MS * Math.pow(2, attempt) + Math.random() * 500;
+        console.log(`[llm] Rate limited, retrying in ${(backoff / 1000).toFixed(1)}s (attempt ${attempt + 1}/${MAX_RETRIES})...`);
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Unreachable');
 }
 
 export async function parseNaturalQuery(input: string, config?: LLMConfig): Promise<ParsedQuery> {

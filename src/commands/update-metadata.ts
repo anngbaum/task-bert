@@ -1,6 +1,7 @@
 import { getPglite } from '../db/pglite-client.js';
 import { callLLM } from '../llm/query-parser.js';
 import type { LLMConfig } from '../llm/query-parser.js';
+import { updateSyncProgress } from '../progress.js';
 
 interface ChatMessage {
   id: number;
@@ -112,12 +113,96 @@ function buildMetadataPrompt(chats: ChatMessages[]): string {
 export interface MetadataOptions {
   since?: Date;
   minMessages?: number;
+  /** If set, run action extraction with a separate (wider) time window */
+  actionsSince?: Date;
+  /** If true, skip action extraction entirely (caller will handle it) */
+  skipActions?: boolean;
+}
+
+/**
+ * Find chats that have messages but no entry in chat_metadata yet.
+ */
+async function getChatsWithoutMetadata(since: Date, minMessages: number = 1): Promise<ChatMessages[]> {
+  const db = await getPglite();
+
+  const chatsResult = await db.query(
+    `SELECT cmj.chat_id, COUNT(*) as msg_count
+     FROM message m
+     JOIN chat_message_join cmj ON cmj.message_id = m.id
+     LEFT JOIN chat_metadata cm ON cm.chat_id = cmj.chat_id
+     WHERE cm.chat_id IS NULL
+       AND m.date > $1
+       AND m.text IS NOT NULL AND m.text != ''
+       AND m.associated_message_type = 0
+     GROUP BY cmj.chat_id
+     HAVING COUNT(*) >= $2`,
+    [since.toISOString(), minMessages]
+  );
+
+  const chatIds = (chatsResult.rows as { chat_id: number }[]).map((r) => r.chat_id);
+  if (chatIds.length === 0) return [];
+
+  const result: ChatMessages[] = [];
+
+  for (const chatId of chatIds) {
+    const chatResult = await db.query(
+      'SELECT display_name, chat_identifier FROM chat WHERE id = $1',
+      [chatId]
+    );
+    const chat = chatResult.rows[0] as { display_name: string | null; chat_identifier: string } | undefined;
+    const chatName = chat?.display_name || chat?.chat_identifier || `Chat ${chatId}`;
+
+    const msgResult = await db.query(
+      `SELECT m.id, m.text, m.is_from_me, m.date,
+              COALESCE(h.display_name, h.identifier, 'Unknown') as sender
+       FROM message m
+       JOIN chat_message_join cmj ON cmj.message_id = m.id
+       LEFT JOIN handle h ON h.id = m.handle_id
+       WHERE cmj.chat_id = $1
+         AND m.text IS NOT NULL AND m.text != ''
+         AND m.associated_message_type = 0
+       ORDER BY m.date DESC
+       LIMIT 20`,
+      [chatId]
+    );
+
+    const messages = (msgResult.rows as any[])
+      .reverse()
+      .map((r) => ({
+        id: r.id,
+        sender: r.is_from_me ? 'Me' : r.sender,
+        text: r.text,
+        date: new Date(r.date).toISOString(),
+      }));
+
+    if (messages.length > 0) {
+      result.push({ chatId, chatName, messages });
+    }
+  }
+
+  return result;
 }
 
 export async function updateMetadata(config: LLMConfig, options: MetadataOptions = {}): Promise<number> {
   const since = options.since ?? await getLastMetadataUpdate();
   const minMessages = options.minMessages ?? 1;
-  const chats = await getChatsWithNewMessages(since, minMessages);
+  // Cap to 60 days max to avoid summarizing ancient conversations
+  const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+  // Use whichever is more recent: the requested date or 60 days ago
+  const effectiveSince = since && since > sixtyDaysAgo ? since : sixtyDaysAgo;
+  const chats = await getChatsWithNewMessages(effectiveSince, minMessages);
+
+  // Also pick up any chats that are missing metadata entirely (within the same window)
+  const missingChats = await getChatsWithoutMetadata(effectiveSince, minMessages);
+  const existingChatIds = new Set(chats.map((c) => c.chatId));
+  for (const mc of missingChats) {
+    if (!existingChatIds.has(mc.chatId)) {
+      chats.push(mc);
+    }
+  }
+  if (missingChats.length > 0) {
+    console.log(`[metadata] Found ${missingChats.length} chat(s) missing metadata.`);
+  }
 
   if (chats.length === 0) {
     console.log('[metadata] No chats with new messages to summarize.');
@@ -135,6 +220,7 @@ export async function updateMetadata(config: LLMConfig, options: MetadataOptions
   for (let i = 0; i < chats.length; i++) {
     const chat = chats[i];
     console.log(`  [metadata] ${i + 1}/${chats.length}: "${chat.chatName}"...`);
+    updateSyncProgress('metadata', `Summarizing chat ${i + 1}/${chats.length}: ${chat.chatName}`, 85 + Math.round((i / chats.length) * 12));
 
     try {
       const msgLines = chat.messages.map((m) =>
@@ -165,11 +251,31 @@ Respond with ONLY the summary text. No JSON, no markdown, no explanation.`,
     }
   }
 
-  // Run action extraction on the same set of chats before updating the timestamp
-  await updateActions(config, chats);
+  // Run action extraction — optionally with a wider time window
+  if (!options.skipActions) {
+    if (options.actionsSince) {
+      // Fetch a broader set of chats for action extraction
+      const actionChats = await getChatsWithNewMessages(options.actionsSince, minMessages);
+      const actionChatIds = new Set(actionChats.map((c) => c.chatId));
+      // Also include any chats we already fetched for summaries
+      for (const c of chats) {
+        if (!actionChatIds.has(c.chatId)) {
+          actionChats.push(c);
+        }
+      }
+      console.log(`[actions] Checking ${actionChats.length} chat(s) active since ${options.actionsSince.toISOString().split('T')[0]}...`);
+      await updateActions(config, actionChats);
+    } else {
+      await updateActions(config, chats);
+    }
+  }
 
-  await setLastMetadataUpdate(now);
-  console.log(`\n[metadata] Updated summaries for ${totalSummaries} chat(s).`);
+  // Only advance the timestamp if at least one summary succeeded —
+  // otherwise failed chats would be permanently skipped on retry.
+  if (totalSummaries > 0) {
+    await setLastMetadataUpdate(now);
+  }
+  console.log(`\n[metadata] Updated summaries for ${totalSummaries}/${chats.length} chat(s).`);
   return totalSummaries;
 }
 
@@ -242,112 +348,213 @@ export async function updateActions(config: LLMConfig, chats?: ChatMessages[]): 
     chats = await getChatsWithNewMessages(since);
   }
 
-  // Get existing incomplete actions for context
   const db = await getPglite();
-  const existingResult = await db.query(
-    `SELECT id, chat_id, action_descriptor, due_date, created_at
-     FROM actions_needed
-     WHERE completed = false
-     ORDER BY created_at DESC`
-  );
-  const existingActions = existingResult.rows as {
-    id: number;
-    chat_id: number;
-    action_descriptor: string;
-    due_date: string | null;
-    created_at: string;
-  }[];
 
   if (chats.length === 0) {
     console.log('[actions] No new messages to check for actions.');
     return 0;
   }
 
-  console.log(`[actions] Checking ${chats.length} chat(s) for action items...`);
-
   const now = new Date();
   const today = now.toISOString().split('T')[0];
+  const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-  const systemPrompt = `You extract action items from iMessage conversations. Today is ${today}.
+  // Split chats into recent (≤2 weeks) and older (>2 weeks) based on latest message
+  const recentChats: ChatMessages[] = [];
+  const olderChats: ChatMessages[] = [];
+  for (const chat of chats) {
+    const latestMsg = chat.messages[chat.messages.length - 1];
+    const latestDate = latestMsg ? new Date(latestMsg.date) : new Date(0);
+    if (latestDate >= twoWeeksAgo) {
+      recentChats.push(chat);
+    } else {
+      olderChats.push(chat);
+    }
+  }
 
-An action item is something concrete that "Me" (the user) has committed to doing, or that requires a meaningful response. Focus on quality over quantity — only create actions for things that would actually fall through the cracks.
+  console.log(`[actions] Checking ${chats.length} chat(s) — ${recentChats.length} recent, ${olderChats.length} older (events-only)...`);
 
-CREATE an action when:
-- "Me" agreed or offered to do something specific (e.g., "I'll send you that link", "Let me check and get back to you", "I'll book the restaurant")
-- Concrete plans were proposed and need confirmation or follow-through (e.g., "Want to grab dinner Friday?", "Let's meet at 7")
-- Someone made a specific, direct request that needs a real answer (e.g., "Can you send me those photos?", "What's your address?")
-- Someone asked a genuine personal question that "Me" hasn't answered yet (e.g., "How are you doing?", "How was your week?", "What are your plans?"). If it's a real question and not rhetorical, it counts — even if asked casually.
-- The conversation ends with the other person's message and "Me" clearly owes a substantive reply
-- There's an upcoming event, deadline, or commitment mentioned that requires preparation
+  const recentSystemPrompt = `You analyze iMessage conversations and extract items for "Me" (the user). Today is ${today}.
 
-DO NOT create an action when:
-- The conversation ended with a casual/social message like "thank you", "haha", "sounds good", "nice!", a reaction, or small talk that doesn't need a reply — but NOT if the message also contains a real question
-- Someone asked a purely rhetorical question or made a comment that doesn't need a real answer (e.g., "lol right?", "crazy!") — a real question with a question mark is not rhetorical
-- The conversation naturally concluded and no one is waiting on anything
-- The message is purely informational with no follow-up expected (e.g., sharing a meme, a news article, a photo without context)
-- "Me" already replied to the question or request later in the conversation
+IMPORTANT: Each task should appear ONCE — either as a follow-up OR an action item, never both.
+- Use ACTION ITEM for explicit commitments or direct requests ("I'll send that", "Can you call me?")
+- Use FOLLOW-UP for softer nudges where no promise was made ("might want to check in", "birthday coming up")
+- If in doubt, pick the one that fits best. Never create both for the same underlying task.
 
-Only extract actions for "Me" (the user), not for other people. Do NOT duplicate existing actions.
+## 1. KEY EVENTS
+Notable events, plans, or milestones mentioned in the conversation that are TODAY (${today}) or in the future.
+Do NOT include events whose date has already passed.
+Examples: "Dinner on Saturday night", "Maddy's birthday next week", "Trip to LA next month"
 
-Each message is tagged with its database ID like [MSG-123]. Use this to identify the originating message for each action.
+## 2. SUGGESTED FOLLOW-UPS
+Softer suggestions for "Me" to follow up on something that is still relevant. These can reference a key event.
+Do NOT create follow-ups for things tied to dates that have already passed.
+Examples: "Wish Maddy happy birthday", "Check in with Mom after her appointment"
+
+Create a follow-up when:
+- A key event is coming up and "Me" might want to acknowledge it
+- Someone shared news that warrants a check-in later
+- The conversation trailed off and "Me" might want to re-engage
+
+## 3. ACTION ITEMS
+Explicit, concrete things "Me" has committed to or been directly asked to do that are still relevant.
+Examples: "Send Mike the photos", "Book the restaurant for Friday"
+
+Create an action item ONLY when:
+- "Me" explicitly agreed or offered to do something ("I'll send you that", "Let me check")
+- Someone made a direct, specific request ("Can you send me those photos?", "Call me")
+- The item is still actionable — if it references a date or event that has already passed (before ${today}), do NOT include it
+
+DO NOT create action items for:
+- Conversations that ended naturally with no pending obligations
+- Rhetorical questions or casual chat
+- Things "Me" already handled later in the conversation
+- Anything tied to a date that has already passed (e.g. "call me Tuesday" when Tuesday was last week)
+- One-time verification codes, OTPs, 2FA codes, or login tokens (e.g. "Your code is 483291")
+
+Each message is tagged with its database ID like [MSG-123]. Use this to identify the originating message.
+
+You will be given the conversation AND any previously extracted items. Your response is the COMPLETE, authoritative list of what's still relevant. Items you omit will be removed. Include both new items and any previously extracted items that are still valid.
+
+- If a previously extracted item is still relevant, include it in your response (you may update the title/date).
+- If a previously extracted item has been resolved in the conversation or is no longer relevant, simply omit it.
+- Do NOT include items the user has already marked as completed or removed (these are listed separately and excluded from your input).
 
 Respond with ONLY valid JSON:
 {
-  "new_actions": [
-    {
-      "chat_id": 123,
-      "message_id": 456,
-      "created_at": "2026-03-12T10:00:00Z",
-      "due_date": "2026-03-13T00:00:00Z",
-      "action_descriptor": "Respond to Fabian about dinner tomorrow"
-    }
+  "key_events": [
+    { "message_id": 456, "title": "Dinner at Nobu on Saturday", "date": "2026-03-28T19:00:00Z" }
   ],
-  "completed_action_ids": [5, 12]
+  "suggested_follow_ups": [
+    { "message_id": 456, "title": "Confirm dinner reservation", "date": "2026-03-27T00:00:00Z", "key_event_index": 0 }
+  ],
+  "action_items": [
+    { "message_id": 789, "title": "Send Mike the address", "date": null }
+  ]
 }
 
 FIELD GUIDANCE:
-- "message_id": The MSG-### ID of the message that triggered this action. Always include this.
-- "action_descriptor": Be specific. Include the person's name and what needs to happen.
-- "created_at": The timestamp of the message that inspired the action.
-- "due_date": Base this on the CONTENT of the message, not arbitrary defaults.
-  - If they suggest "dinner tomorrow" and today is ${today}, the due date is TOMORROW — you need to respond before the event.
-  - If they say "this weekend", due date is the Friday before.
-  - If they say "next week", due date is the Monday of next week.
+- "message_id": The MSG-### ID of the originating message. Always include this.
+- "title": Be specific. Include the person's name and what the item is about.
+- "date": Based on conversation content, not arbitrary defaults.
+  - If they say "dinner tomorrow" and today is ${today}, the date is tomorrow.
+  - If they say "this weekend", use Saturday.
   - If they mention a specific date ("on the 25th", "March 30"), use that date.
-  - If no specific timeframe is mentioned, use null — don't invent urgency.
-- "completed_action_ids": IDs of existing actions that the new messages show are resolved (e.g., "Me" responded, plans were confirmed, the event passed).
-- If there are no new actions and nothing completed, return {"new_actions": [], "completed_action_ids": []}.
+  - If no timeframe is mentioned, use null.
+- "key_event_index": Zero-based index into the key_events array in THIS response. Use this to link a follow-up to a key event you're creating in the same response. Use null if unrelated to a key event.
+- If nothing to extract, return empty arrays for all fields.
+
+No markdown fencing, no explanation.`;
+
+  const olderSystemPrompt = `You analyze iMessage conversations and extract ONLY key events and related follow-ups. Today is ${today}.
+
+This conversation is older than 2 weeks. Do NOT create action items — any commitments from this far back are either done or stale.
+Only extract key events with FUTURE dates that "Me" (the user) might still want to be reminded about.
+
+## 1. KEY EVENTS
+Future-dated events, milestones, or recurring dates mentioned in the conversation.
+Examples: "Maddy's birthday on April 5", "Trip to LA in May", "Baby due in June", "Wedding on July 12"
+
+Only include events whose date is TODAY or later. Skip past events.
+
+## 2. SUGGESTED FOLLOW-UPS
+A follow-up tied to an upcoming key event — something "Me" might want to do before or on that date.
+Examples: "Wish Maddy happy birthday", "Ask about LA trip plans", "Check in closer to the due date"
+
+Each message is tagged with its database ID like [MSG-123]. Use this to identify the originating message.
+
+Your response is the COMPLETE, authoritative list of what's still relevant. Items you omit will be removed.
+
+Respond with ONLY valid JSON:
+{
+  "key_events": [
+    { "message_id": 456, "title": "Maddy's birthday", "date": "2026-04-05T00:00:00Z" }
+  ],
+  "suggested_follow_ups": [
+    { "message_id": 456, "title": "Wish Maddy happy birthday", "date": "2026-04-05T00:00:00Z", "key_event_index": 0 }
+  ],
+  "action_items": []
+}
+
+FIELD GUIDANCE:
+- "message_id": The MSG-### ID of the originating message. Always include this.
+- "title": Be specific. Include the person's name.
+- "date": Must be a real date from the conversation, today (${today}) or later.
+- "key_event_index": Zero-based index into the key_events array in THIS response.
+- "action_items": Always return an empty array — do not create action items for old conversations.
+- If nothing to extract, return empty arrays for all fields.
 
 No markdown fencing, no explanation.`;
 
   let totalNew = 0;
   let totalCompleted = 0;
 
-  for (let i = 0; i < chats.length; i++) {
-    const chat = chats[i];
+  // Process all chats: older ones first, then recent
+  const allChats = [...olderChats, ...recentChats];
+  for (let i = 0; i < allChats.length; i++) {
+    const chat = allChats[i];
+    const latestMsg = chat.messages[chat.messages.length - 1];
+    const isRecent = latestMsg ? new Date(latestMsg.date) >= twoWeeksAgo : false;
+    const systemPrompt = isRecent ? recentSystemPrompt : olderSystemPrompt;
 
-    // Get existing actions for this chat (both incomplete and completed)
-    const freshExisting = await db.query(
-      `SELECT id, chat_id, action_descriptor, due_date, created_at, completed
-       FROM actions_needed
-       WHERE chat_id = $1
-       ORDER BY created_at DESC`,
+    // Get existing active items for this chat — the LLM decides what to keep
+    const existingEvents = await db.query(
+      `SELECT id, title, date FROM key_events WHERE chat_id = $1 AND (removed = false OR removed IS NULL) ORDER BY created_at DESC`,
       [chat.chatId]
     );
-    const currentActions = freshExisting.rows as (typeof existingActions[number] & { completed: boolean })[];
+    const existingFollowUps = await db.query(
+      `SELECT id, title, date FROM suggested_follow_ups WHERE chat_id = $1 AND completed = false ORDER BY created_at DESC`,
+      [chat.chatId]
+    );
+    const existingActionItems = await db.query(
+      `SELECT id, title, date FROM action_items WHERE chat_id = $1 AND completed = false ORDER BY created_at DESC`,
+      [chat.chatId]
+    );
 
-    const incompleteActions = currentActions.filter((a) => !a.completed);
-    const completedActions = currentActions.filter((a) => a.completed);
+    // Get completed/removed items — these must NOT be recreated
+    const removedEvents = await db.query(
+      `SELECT title FROM key_events WHERE chat_id = $1 AND removed = true ORDER BY created_at DESC`,
+      [chat.chatId]
+    );
+    const completedFollowUps = await db.query(
+      `SELECT title FROM suggested_follow_ups WHERE chat_id = $1 AND completed = true ORDER BY created_at DESC`,
+      [chat.chatId]
+    );
+    const completedActions = await db.query(
+      `SELECT title FROM action_items WHERE chat_id = $1 AND completed = true ORDER BY created_at DESC`,
+      [chat.chatId]
+    );
 
     let existingBlock = '';
-    if (incompleteActions.length > 0) {
-      existingBlock += `\n\nEXISTING INCOMPLETE ACTIONS (do not duplicate these):\n${incompleteActions.map((a) =>
-        `- [ID ${a.id}]: "${a.action_descriptor}" (due: ${a.due_date ?? 'none'}, created: ${a.created_at})`
+    const events = existingEvents.rows as { id: number; title: string; date: string | null }[];
+    if (events.length > 0) {
+      existingBlock += `\n\nPREVIOUSLY EXTRACTED KEY EVENTS (include in your response if still relevant, omit if not):\n${events.map((e) =>
+        `- "${e.title}" (date: ${e.date ?? 'none'})`
       ).join('\n')}`;
     }
-    if (completedActions.length > 0) {
-      existingBlock += `\n\nALREADY COMPLETED ACTIONS (do NOT recreate these):\n${completedActions.map((a) =>
-        `- "${a.action_descriptor}"`
+
+    const followUps = existingFollowUps.rows as { id: number; title: string; date: string | null }[];
+    if (followUps.length > 0) {
+      existingBlock += `\n\nPREVIOUSLY EXTRACTED FOLLOW-UPS (include in your response if still relevant, omit if not):\n${followUps.map((f) =>
+        `- "${f.title}" (date: ${f.date ?? 'none'})`
+      ).join('\n')}`;
+    }
+
+    const actionItems = existingActionItems.rows as { id: number; title: string; date: string | null }[];
+    if (actionItems.length > 0) {
+      existingBlock += `\n\nPREVIOUSLY EXTRACTED ACTION ITEMS (include in your response if still relevant, omit if not):\n${actionItems.map((a) =>
+        `- "${a.title}" (date: ${a.date ?? 'none'})`
+      ).join('\n')}`;
+    }
+
+    // Add completed/removed items so the LLM knows not to recreate them
+    const doneItems: string[] = [];
+    for (const r of removedEvents.rows as { title: string }[]) doneItems.push(r.title);
+    for (const r of completedFollowUps.rows as { title: string }[]) doneItems.push(r.title);
+    for (const r of completedActions.rows as { title: string }[]) doneItems.push(r.title);
+    if (doneItems.length > 0) {
+      existingBlock += `\n\nALREADY COMPLETED OR REMOVED BY USER (do NOT recreate these under any circumstances):\n${doneItems.map((t) =>
+        `- "${t}"`
       ).join('\n')}`;
     }
 
@@ -363,49 +570,79 @@ No markdown fencing, no explanation.`;
         1024
       );
       const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(jsonStr) as {
-        new_actions: {
-          chat_id: number;
-          message_id: number | null;
-          created_at: string;
-          due_date: string | null;
-          action_descriptor: string;
-        }[];
-        completed_action_ids: number[];
+      // Try to extract JSON from the response even if there's extra text around it
+      let jsonToParse = jsonStr;
+      if (!jsonToParse.startsWith('{')) {
+        const start = jsonToParse.indexOf('{');
+        const end = jsonToParse.lastIndexOf('}');
+        if (start !== -1 && end !== -1) {
+          jsonToParse = jsonToParse.slice(start, end + 1);
+        }
+      }
+      const parsed = JSON.parse(jsonToParse) as {
+        key_events: { message_id: number; title: string; date: string | null }[];
+        suggested_follow_ups: { message_id: number; title: string; date: string | null; key_event_index: number | null }[];
+        action_items: { message_id: number; title: string; date: string | null }[];
       };
 
-      for (const action of parsed.new_actions) {
-        // Skip if an incomplete action already exists for the same chat + message
-        if (action.message_id) {
-          const existing = await db.query(
-            `SELECT id FROM actions_needed WHERE chat_id = $1 AND message_id = $2 AND completed = false`,
-            [chat.chatId, action.message_id]
-          );
-          if (existing.rows.length > 0) continue;
-        }
-        await db.query(
-          `INSERT INTO actions_needed (chat_id, created_at, due_date, action_descriptor, message_id)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [chat.chatId, action.created_at, action.due_date, action.action_descriptor, action.message_id ?? null]
+      // Delete existing active (non-completed, non-removed) items for this chat —
+      // the LLM response is now the source of truth for what's still relevant.
+      // User-completed and user-removed items are preserved.
+      await db.query('DELETE FROM key_events WHERE chat_id = $1 AND (removed = false OR removed IS NULL)', [chat.chatId]);
+      // Unlink follow-ups from deleted events before deleting
+      await db.query('UPDATE suggested_follow_ups SET key_event_id = NULL WHERE chat_id = $1 AND completed = false', [chat.chatId]);
+      await db.query('DELETE FROM suggested_follow_ups WHERE chat_id = $1 AND completed = false', [chat.chatId]);
+      await db.query('DELETE FROM action_items WHERE chat_id = $1 AND completed = false', [chat.chatId]);
+
+      // Insert fresh items from LLM response
+      const newEventIds: number[] = [];
+      for (const event of parsed.key_events) {
+        const result = await db.query(
+          `INSERT INTO key_events (chat_id, message_id, title, date) VALUES ($1, $2, $3, $4) RETURNING id`,
+          [chat.chatId, event.message_id, event.title, event.date]
         );
-        console.log(`  [actions] ${i + 1}/${chats.length} "${chat.chatName}" → ${action.action_descriptor}`);
+        const newId = (result.rows[0] as { id: number }).id;
+        newEventIds.push(newId);
+        console.log(`  [events] ${i + 1}/${allChats.length} "${chat.chatName}" → ${event.title}`);
+        totalNew++;
       }
 
-      if (parsed.completed_action_ids.length > 0) {
-        const placeholders = parsed.completed_action_ids.map((_, j) => `$${j + 1}`).join(', ');
+      for (const followUp of parsed.suggested_follow_ups) {
+        const keyEventId = followUp.key_event_index != null && followUp.key_event_index < newEventIds.length
+          ? newEventIds[followUp.key_event_index]
+          : null;
+
         await db.query(
-          `UPDATE actions_needed SET completed = true WHERE id IN (${placeholders})`,
-          parsed.completed_action_ids
+          `INSERT INTO suggested_follow_ups (chat_id, message_id, title, date, key_event_id) VALUES ($1, $2, $3, $4, $5)`,
+          [chat.chatId, followUp.message_id, followUp.title, followUp.date, keyEventId]
         );
+        console.log(`  [follow-ups] ${i + 1}/${allChats.length} "${chat.chatName}" → ${followUp.title}`);
+        totalNew++;
       }
 
-      totalNew += parsed.new_actions.length;
-      totalCompleted += parsed.completed_action_ids.length;
+      for (const action of parsed.action_items) {
+        await db.query(
+          `INSERT INTO action_items (chat_id, message_id, title, date) VALUES ($1, $2, $3, $4)`,
+          [chat.chatId, action.message_id, action.title, action.date]
+        );
+        console.log(`  [action-items] ${i + 1}/${allChats.length} "${chat.chatName}" → ${action.title}`);
+        totalNew++;
+      }
     } catch (err) {
-      console.error(`  [actions] ${i + 1}/${chats.length} "${chat.chatName}" ✗ ${(err as Error).message}`);
+      const errMsg = (err as Error).message;
+      if (errMsg.includes('JSON') || errMsg.includes('Unexpected')) {
+        console.error(`  [actions] ${i + 1}/${allChats.length} "${chat.chatName}" ✗ JSON parse failed: ${errMsg}`);
+      } else {
+        console.error(`  [actions] ${i + 1}/${allChats.length} "${chat.chatName}" ✗ ${errMsg}`);
+      }
     }
   }
 
-  console.log(`\n[actions] Added ${totalNew} new action(s), completed ${totalCompleted}.`);
+  // Verify data actually persisted
+  const verifyEvents = await db.query('SELECT count(*) as cnt FROM key_events');
+  const verifyFollowUps = await db.query('SELECT count(*) as cnt FROM suggested_follow_ups WHERE completed = false');
+  const verifyActions = await db.query('SELECT count(*) as cnt FROM action_items WHERE completed = false');
+  console.log(`\n[actions] Added ${totalNew} new item(s), completed ${totalCompleted}.`);
+  console.log(`[actions] DB verify — events: ${(verifyEvents.rows[0] as any).cnt}, follow-ups: ${(verifyFollowUps.rows[0] as any).cnt}, action items: ${(verifyActions.rows[0] as any).cnt}`);
   return totalNew;
 }

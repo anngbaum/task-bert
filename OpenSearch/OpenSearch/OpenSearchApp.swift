@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct OpenSearchApp: App {
-    @State private var serverManager = ServerManager()
+    @StateObject private var serverManager = ServerManager()
 
     var body: some Scene {
         WindowGroup {
@@ -10,6 +10,8 @@ struct OpenSearchApp: App {
                 switch serverManager.state {
                 case .running:
                     ContentView()
+                case .initializing:
+                    ServerInitializingView(progress: serverManager.syncProgress)
                 case .starting, .stopped:
                     ServerStartingView()
                 case .needsFullDiskAccess:
@@ -31,7 +33,7 @@ struct OpenSearchApp: App {
                 serverManager.stop()
             }
         }
-        .defaultSize(width: 800, height: 600)
+        .defaultAppWindowSize()
     }
 }
 
@@ -45,6 +47,68 @@ struct ServerStartingView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct ServerInitializingView: View {
+    let progress: ServerManager.SyncProgress
+
+    private var stageLabel: String {
+        switch progress.stage {
+        case "setup": return "Preparing"
+        case "etl": return "Importing Messages"
+        case "embedding": return "Building Search Index"
+        case "metadata": return "Generating Summaries"
+        case "done": return "Finishing Up"
+        default: return "Setting Up"
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "magnifyingglass.circle.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(Color.accentColor)
+
+            Text("Setting up OpenSearch...")
+                .font(.title3)
+                .fontWeight(.medium)
+
+            VStack(spacing: 8) {
+                ProgressView(value: progress.percent, total: 100)
+                    .progressViewStyle(.linear)
+                    .frame(width: 300)
+
+                HStack {
+                    Text(stageLabel)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(Int(progress.percent))%")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .frame(width: 300)
+
+                if !progress.detail.isEmpty {
+                    Text(progress.detail)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Text("This may take a few minutes on first launch.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeInOut(duration: 0.3), value: progress.percent)
     }
 }
 
@@ -118,16 +182,43 @@ struct ServerErrorView: View {
             Text("Server Error")
                 .font(.title2)
                 .fontWeight(.semibold)
-            Text(message)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-            Button("Retry") {
-                retry()
+
+            ScrollView {
+                Text(message)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
             }
-            .buttonStyle(.borderedProminent)
+            .frame(maxHeight: 200)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+            .padding(.horizontal, 40)
+
+            HStack(spacing: 12) {
+                Button("Copy Error") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message, forType: .string)
+                }
+                .buttonStyle(.bordered)
+
+                Button("Retry") {
+                    retry()
+                }
+                .buttonStyle(.borderedProminent)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+extension Scene {
+    func defaultAppWindowSize() -> some Scene {
+        if #available(macOS 14.0, *) {
+            return self.defaultSize(width: 800, height: 600)
+        } else {
+            return self
+        }
     }
 }

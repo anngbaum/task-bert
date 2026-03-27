@@ -25,44 +25,67 @@ export interface ResyncOptions {
   short?: boolean;
 }
 
-interface SavedAction {
+interface SavedFollowUp {
   chat_id: number;
-  created_at: string;
-  due_date: string | null;
-  action_descriptor: string;
-  completed: boolean;
   message_id: number | null;
+  title: string;
+  date: string | null;
+  key_event_id: number | null;
+  completed: boolean;
+  created_at: string;
 }
 
-async function backupCompletedActions(): Promise<SavedAction[]> {
+interface SavedActionItem {
+  chat_id: number;
+  message_id: number;
+  title: string;
+  date: string | null;
+  completed: boolean;
+  created_at: string;
+}
+
+async function backupCompletedItems(): Promise<{ followUps: SavedFollowUp[]; actionItems: SavedActionItem[] }> {
   try {
     const db = await getPglite();
-    const result = await db.query(
-      'SELECT chat_id, created_at, due_date, action_descriptor, completed, message_id FROM actions_needed WHERE completed = true'
+    const followUps = await db.query(
+      'SELECT chat_id, message_id, title, date, key_event_id, completed, created_at FROM suggested_follow_ups WHERE completed = true'
     );
-    return result.rows as SavedAction[];
+    const actionItems = await db.query(
+      'SELECT chat_id, message_id, title, date, completed, created_at FROM action_items WHERE completed = true'
+    );
+    return {
+      followUps: followUps.rows as SavedFollowUp[],
+      actionItems: actionItems.rows as SavedActionItem[],
+    };
   } catch {
-    return [];
+    return { followUps: [], actionItems: [] };
   }
 }
 
-async function restoreCompletedActions(actions: SavedAction[]): Promise<void> {
-  if (actions.length === 0) return;
+async function restoreCompletedItems(items: { followUps: SavedFollowUp[]; actionItems: SavedActionItem[] }): Promise<void> {
   const db = await getPglite();
-  for (const a of actions) {
+  for (const f of items.followUps) {
     await db.query(
-      `INSERT INTO actions_needed (chat_id, created_at, due_date, action_descriptor, completed, message_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [a.chat_id, a.created_at, a.due_date, a.action_descriptor, a.completed, a.message_id]
+      `INSERT INTO suggested_follow_ups (chat_id, message_id, title, date, key_event_id, completed, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [f.chat_id, f.message_id, f.title, f.date, f.key_event_id, f.completed, f.created_at]
     );
   }
-  console.log(`  Restored ${actions.length} completed action(s).`);
+  for (const a of items.actionItems) {
+    await db.query(
+      `INSERT INTO action_items (chat_id, message_id, title, date, completed, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [a.chat_id, a.message_id, a.title, a.date, a.completed, a.created_at]
+    );
+  }
+  const total = items.followUps.length + items.actionItems.length;
+  if (total > 0) console.log(`  Restored ${total} completed item(s).`);
 }
 
 export async function resync(options: ResyncOptions = {}): Promise<void> {
   if (!options.metadataOnly) {
-    // 0. Back up completed actions before wiping
-    const completedActions = await backupCompletedActions();
+    // 0. Back up completed items before wiping
+    const completedItems = await backupCompletedItems();
 
     // 1. Wipe PGLite data (not the source chat.db)
     if (fs.existsSync(PG_DATA_DIR)) {
@@ -84,8 +107,8 @@ export async function resync(options: ResyncOptions = {}): Promise<void> {
     console.log(`Ingesting last ${label} of messages...`);
     await ingest({ months });
 
-    // 4. Restore completed actions so they aren't recreated
-    await restoreCompletedActions(completedActions);
+    // 4. Restore completed items so they aren't recreated
+    await restoreCompletedItems(completedItems);
 
     // 5. Embed all messages
     console.log('\nStarting embedding...');
@@ -102,7 +125,7 @@ export async function resync(options: ResyncOptions = {}): Promise<void> {
     // Server not running — good
   }
 
-  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   console.log('\nUpdating chat metadata for recent conversations...');
   const settings = loadSettings();
   const llmConfig = {
@@ -110,7 +133,7 @@ export async function resync(options: ResyncOptions = {}): Promise<void> {
     anthropicApiKey: settings.anthropicApiKey,
     openaiApiKey: settings.openaiApiKey,
   };
-  await updateMetadata(llmConfig, { since: fourteenDaysAgo, minMessages: 2 });
+  await updateMetadata(llmConfig, { since: sevenDaysAgo, minMessages: 2, actionsSince: sevenDaysAgo });
 
   console.log('\nResync complete!');
 }

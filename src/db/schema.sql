@@ -57,14 +57,35 @@ CREATE TABLE IF NOT EXISTS chat_metadata (
   last_updated TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS actions_needed (
+CREATE TABLE IF NOT EXISTS key_events (
   id SERIAL PRIMARY KEY,
   chat_id INTEGER NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  due_date TIMESTAMPTZ,
-  action_descriptor TEXT NOT NULL,
+  message_id INTEGER,
+  title TEXT NOT NULL,
+  date TIMESTAMPTZ,
+  removed BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS suggested_follow_ups (
+  id SERIAL PRIMARY KEY,
+  chat_id INTEGER NOT NULL,
+  message_id INTEGER,
+  title TEXT NOT NULL,
+  date TIMESTAMPTZ,
+  key_event_id INTEGER REFERENCES key_events(id),
   completed BOOLEAN DEFAULT FALSE,
-  message_id INTEGER
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS action_items (
+  id SERIAL PRIMARY KEY,
+  chat_id INTEGER NOT NULL,
+  message_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  date TIMESTAMPTZ,
+  completed BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS metadata_meta (

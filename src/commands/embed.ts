@@ -1,5 +1,6 @@
 import { getPglite } from '../db/pglite-client.js';
 import { getEmbeddingsBatch, disposeEmbedder } from '../embeddings/local.js';
+import { updateSyncProgress } from '../progress.js';
 
 /**
  * Returns true if a message has enough meaningful text content to produce
@@ -99,6 +100,9 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
 
       processed += allRows.length;
       const pct = ((processed / total) * 100).toFixed(1);
+      // Map embedding progress (0-100%) into the 25-85% overall range
+      const overallPct = 25 + Math.round((processed / total) * 60);
+      updateSyncProgress('embedding', `Embedding messages: ${processed.toLocaleString()}/${total.toLocaleString()} (${pct}%)`, overallPct);
       process.stdout.write(`  Progress: ${processed}/${total} (${pct}%)\r`);
     } catch (err) {
       errors++;

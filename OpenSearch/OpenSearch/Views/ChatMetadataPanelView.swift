@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ChatMetadataPanelView: View {
-    @Bindable var viewModel: SearchViewModel
+    @ObservedObject var viewModel: SearchViewModel
 
     var body: some View {
         Group {

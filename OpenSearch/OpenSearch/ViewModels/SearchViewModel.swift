@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 struct TypeaheadSuggestion: Identifiable {
     enum Kind { case withContact, sentBy, group }
@@ -11,32 +12,31 @@ struct TypeaheadSuggestion: Identifiable {
     let group: GroupChat?
 }
 
-@Observable
-final class SearchViewModel {
-    var query: String = ""
-    var mode: SearchMode = .hybrid
-    var filters = SearchFilters()
+final class SearchViewModel: ObservableObject {
+    @Published var query: String = ""
+    @Published var mode: SearchMode = .hybrid
+    @Published var filters = SearchFilters()
 
-    private(set) var results: [SearchResult] = []
-    private(set) var isSearching: Bool = false
-    private(set) var isLoadingMore: Bool = false
-    private(set) var hasMore: Bool = false
-    private(set) var errorMessage: String? = nil
-    private(set) var hasSearched: Bool = false
+    @Published private(set) var results: [SearchResult] = []
+    @Published private(set) var isSearching: Bool = false
+    @Published private(set) var isLoadingMore: Bool = false
+    @Published private(set) var hasMore: Bool = false
+    @Published private(set) var errorMessage: String? = nil
+    @Published private(set) var hasSearched: Bool = false
 
     // Contacts & groups for typeahead
-    private(set) var contacts: [Contact] = []
-    private(set) var groups: [GroupChat] = []
+    @Published private(set) var contacts: [Contact] = []
+    @Published private(set) var groups: [GroupChat] = []
 
     // Typeahead state
-    private(set) var showTypeahead: Bool = false
-    private(set) var typeaheadSuggestions: [TypeaheadSuggestion] = []
-    private(set) var activeKeyword: String? = nil
+    @Published private(set) var showTypeahead: Bool = false
+    @Published private(set) var typeaheadSuggestions: [TypeaheadSuggestion] = []
+    @Published private(set) var activeKeyword: String? = nil
 
     // Sync state
-    private(set) var isSyncing: Bool = false
-    private(set) var lastSyncMessage: String? = nil
-    private(set) var lastSyncedAt: Date? = nil
+    @Published private(set) var isSyncing: Bool = false
+    @Published private(set) var lastSyncMessage: String? = nil
+    @Published private(set) var lastSyncedAt: Date? = nil
 
     var syncTooltip: String {
         if isSyncing { return "Syncing..." }
@@ -53,33 +53,41 @@ final class SearchViewModel {
     }
 
     // Chat metadata panel
-    private(set) var chatMetadata: [ChatMetadata] = []
-    private(set) var isLoadingMetadata: Bool = false
-    var showMetadataPanel: Bool = false
+    @Published private(set) var chatMetadata: [ChatMetadata] = []
+    @Published private(set) var isLoadingMetadata: Bool = false
+    @Published var showMetadataPanel: Bool = false
 
     // Actions panel
-    private(set) var actions: [ActionItem] = []
-    private(set) var completedActions: [ActionItem] = []
-    private(set) var isLoadingActions: Bool = false
-    var showActionsPanel: Bool = false
-    var showCompletedActions: Bool = false
+    @Published private(set) var keyEvents: [KeyEvent] = []
+    @Published private(set) var suggestedFollowUps: [SuggestedFollowUp] = []
+    @Published private(set) var actionItems: [ActionItem] = []
+    @Published private(set) var completedFollowUps: [SuggestedFollowUp] = []
+    @Published private(set) var completedActionItems: [ActionItem] = []
+    @Published private(set) var removedEvents: [KeyEvent] = []
+    @Published private(set) var isLoadingActions: Bool = false
+    @Published var showActionsPanel: Bool = false
+    @Published var showCompletedActions: Bool = false
 
     // Context messages keyed by result message ID
-    private(set) var contextMessages: [Int: [ContextMessage]] = [:]
-    private(set) var loadingContext: Set<Int> = []
-    var expandedResults: Set<Int> = []
+    @Published private(set) var contextMessages: [Int: [ContextMessage]] = [:]
+    @Published private(set) var loadingContext: Set<Int> = []
+    @Published var expandedResults: Set<Int> = []
 
     // Thread view state
-    private(set) var threadResponse: ThreadResponse? = nil
-    private(set) var isLoadingThread: Bool = false
-    private(set) var isLoadingMoreThread: Bool = false
-    private(set) var threadError: String? = nil
-    var threadAnchorId: Int? = nil
+    @Published private(set) var threadResponse: ThreadResponse? = nil
+    @Published private(set) var isLoadingThread: Bool = false
+    @Published private(set) var isLoadingMoreThread: Bool = false
+    @Published private(set) var threadError: String? = nil
+    @Published var threadAnchorId: Int? = nil
 
     // API key state — controls whether LLM-powered tabs are available
-    var hasApiKey: Bool = false
+    @Published var hasApiKey: Bool = false
+
+    // Set to true after a hard reset completes — ContentView observes this to reset onboarding
+    @Published var didCompleteHardReset: Bool = false
 
     private let service = SearchService()
+    private var healthPollTask: Task<Void, Never>?
 
     init() {
         // Apply default preset dates
@@ -88,6 +96,7 @@ final class SearchViewModel {
             await loadContacts()
             await loadGroups()
             await checkApiKeyStatus()
+            await pollServerSyncStatus()
         }
     }
 
@@ -98,6 +107,60 @@ final class SearchViewModel {
             hasApiKey = (settings.anthropicApiKey != nil || settings.openaiApiKey != nil)
         } catch {
             hasApiKey = false
+        }
+    }
+
+    /// Poll the server's health endpoint on startup to detect background syncs.
+    /// Stops polling once the server reports it's no longer syncing.
+    @MainActor
+    private func pollServerSyncStatus() async {
+        // Don't poll if the user already triggered a sync from the UI
+        guard !isSyncing else { return }
+
+        do {
+            let health = try await service.fetchHealth()
+            if health.syncing {
+                isSyncing = true
+                lastSyncMessage = progressMessage(health.progress)
+
+                // Poll until done
+                while true {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    let h = try await service.fetchHealth()
+                    if !h.syncing && h.ready {
+                        break
+                    }
+                    lastSyncMessage = progressMessage(h.progress)
+                }
+
+                // Reload data now that sync is complete
+                await loadContacts()
+                await loadGroups()
+                await loadChatMetadata()
+                await loadActions()
+                lastSyncMessage = nil
+                isSyncing = false
+            }
+        } catch {
+            // Server not reachable yet — ignore
+        }
+    }
+
+    private func progressMessage(_ progress: SearchService.HealthProgress?) -> String {
+        guard let p = progress else {
+            return "Sync in progress..."
+        }
+        switch p.stage {
+        case "etl":
+            return "Importing messages... (\(Int(p.percent))%)"
+        case "embedding":
+            return "Generating embeddings... (\(Int(p.percent))%)"
+        case "metadata":
+            return p.detail.isEmpty ? "Updating conversations... (\(Int(p.percent))%)" : p.detail
+        case "setup":
+            return "Preparing database..."
+        default:
+            return p.detail.isEmpty ? "Sync in progress... (\(Int(p.percent))%)" : p.detail
         }
     }
 
@@ -352,12 +415,12 @@ final class SearchViewModel {
     // MARK: - Sync
 
     @MainActor
-    func sync() async {
+    func sync(days: Int = 7) async {
         isSyncing = true
         lastSyncMessage = nil
 
         do {
-            let result = try await service.sync()
+            let result = try await service.sync(days: days)
             lastSyncMessage = "Synced \(result.messagesAdded) new messages"
             lastSyncedAt = Date()
             await loadContacts()
@@ -371,6 +434,58 @@ final class SearchViewModel {
         }
 
         isSyncing = false
+    }
+
+    @MainActor
+    func hardReset() async {
+        // Clear all state immediately so the UI reflects the reset
+        isSyncing = true
+        lastSyncMessage = "Resetting database..."
+        lastSyncedAt = nil
+        chatMetadata = []
+        keyEvents = []
+        suggestedFollowUps = []
+        actionItems = []
+        completedFollowUps = []
+        completedActionItems = []
+        removedEvents = []
+        results = []
+        contacts = []
+        groups = []
+
+        do {
+            // Trigger the hard reset — server returns immediately
+            _ = try await service.sync(days: 7, hardReset: true)
+
+            // Poll health endpoint until the reset finishes
+            lastSyncMessage = "Hard reset in progress..."
+            while true {
+                try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                let health = try await service.fetchHealth()
+                if health.ready && !health.syncing {
+                    break
+                }
+                lastSyncMessage = progressMessage(health.progress)
+            }
+
+            lastSyncMessage = "Hard reset complete"
+            lastSyncedAt = Date()
+            await loadContacts()
+            await loadGroups()
+            await loadChatMetadata()
+            await loadActions()
+        } catch is CancellationError {
+            lastSyncMessage = "Hard reset cancelled"
+        } catch is URLError {
+            lastSyncMessage = "Hard reset failed: cannot connect to server"
+        } catch {
+            lastSyncMessage = "Hard reset failed: \(error.localizedDescription)"
+        }
+
+        isSyncing = false
+
+        // Signal ContentView to show onboarding after reset is fully complete
+        didCompleteHardReset = true
     }
 
     // MARK: - Thread
@@ -455,7 +570,7 @@ final class SearchViewModel {
         isLoadingMetadata = false
     }
 
-    private(set) var refreshingMetadataChats: Set<Int> = []
+    @Published private(set) var refreshingMetadataChats: Set<Int> = []
 
     @MainActor
     func refreshChatMetadata(chatId: Int) async {
@@ -483,9 +598,14 @@ final class SearchViewModel {
     func loadActions() async {
         isLoadingActions = true
         do {
-            actions = try await service.fetchActions()
+            let response = try await service.fetchActions()
+            keyEvents = response.key_events
+            suggestedFollowUps = response.suggested_follow_ups
+            actionItems = response.action_items
         } catch {
-            actions = []
+            keyEvents = []
+            suggestedFollowUps = []
+            actionItems = []
         }
         isLoadingActions = false
     }
@@ -493,21 +613,51 @@ final class SearchViewModel {
     @MainActor
     func loadCompletedActions() async {
         do {
-            completedActions = try await service.fetchActions(includeCompleted: true)
-                .filter { $0.completed }
+            let response = try await service.fetchActions(includeCompleted: true)
+            completedFollowUps = response.suggested_follow_ups.filter { $0.completed }
+            completedActionItems = response.action_items.filter { $0.completed }
+            removedEvents = response.key_events.filter { $0.removed == true }
         } catch {
-            completedActions = []
+            completedFollowUps = []
+            completedActionItems = []
+            removedEvents = []
         }
     }
 
     @MainActor
-    func completeAction(id: Int) async {
+    func completeActionItem(id: Int) async {
         do {
-            try await service.completeAction(id: id)
-            if let action = actions.first(where: { $0.id == id }) {
-                completedActions.insert(action, at: 0)
+            try await service.completeAction(id: id, type: "action_item")
+            if let item = actionItems.first(where: { $0.id == id }) {
+                completedActionItems.insert(item, at: 0)
             }
-            actions.removeAll { $0.id == id }
+            actionItems.removeAll { $0.id == id }
+        } catch {
+            // Silently fail — user can retry
+        }
+    }
+
+    @MainActor
+    func completeFollowUp(id: Int) async {
+        do {
+            try await service.completeAction(id: id, type: "follow_up")
+            if let item = suggestedFollowUps.first(where: { $0.id == id }) {
+                completedFollowUps.insert(item, at: 0)
+            }
+            suggestedFollowUps.removeAll { $0.id == id }
+        } catch {
+            // Silently fail — user can retry
+        }
+    }
+
+    @MainActor
+    func deleteEvent(id: Int) async {
+        do {
+            try await service.deleteEvent(id: id)
+            if let event = keyEvents.first(where: { $0.id == id }) {
+                removedEvents.insert(event, at: 0)
+            }
+            keyEvents.removeAll { $0.id == id }
         } catch {
             // Silently fail — user can retry
         }
@@ -525,6 +675,22 @@ final class SearchViewModel {
 
     func updateSettings(_ updates: [String: String]) async throws {
         try await service.updateSettings(updates)
+    }
+
+    // MARK: - Debug Logs
+
+    @Published private(set) var debugLogs: [SearchService.LogEntry] = []
+    @Published private(set) var isLoadingLogs: Bool = false
+
+    @MainActor
+    func loadDebugLogs() async {
+        isLoadingLogs = true
+        do {
+            debugLogs = try await service.fetchLogs(limit: 300)
+        } catch {
+            debugLogs = []
+        }
+        isLoadingLogs = false
     }
 
     // MARK: - Context

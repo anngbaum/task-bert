@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
-import { getPglite, closePglite, initSchema } from './db/pglite-client.js';
+import { getPglite, closePglite, initSchema, verifyDatabase, wipePgliteData } from './db/pglite-client.js';
 import { DATA_DIR } from './config.js';
 import { searchFTS } from './search/fts.js';
 import { searchVector } from './search/vector.js';
@@ -15,19 +15,71 @@ import { updateMetadata, refreshChatMetadata } from './commands/update-metadata.
 import { getThread, NotFoundError } from './thread/thread.js';
 import type { SearchOptions } from './types.js';
 
+// --- In-memory log buffer for debug panel ---
+const LOG_BUFFER_MAX = 500;
+const logBuffer: { ts: string; level: string; message: string }[] = [];
+
+function pushLog(level: string, message: string) {
+  const entry = { ts: new Date().toISOString(), level, message };
+  logBuffer.push(entry);
+  if (logBuffer.length > LOG_BUFFER_MAX) {
+    logBuffer.splice(0, logBuffer.length - LOG_BUFFER_MAX);
+  }
+}
+
+function getRecentLogs(limit: number = 200) {
+  return logBuffer.slice(-limit);
+}
+
+// Intercept console.log/error/warn to capture into buffer
+const origLog = console.log.bind(console);
+const origError = console.error.bind(console);
+const origWarn = console.warn.bind(console);
+
+console.log = (...args: unknown[]) => {
+  origLog(...args);
+  pushLog('info', args.map(String).join(' '));
+};
+console.error = (...args: unknown[]) => {
+  origError(...args);
+  pushLog('error', args.map(String).join(' '));
+};
+console.warn = (...args: unknown[]) => {
+  origWarn(...args);
+  pushLog('warn', args.map(String).join(' '));
+};
+
 const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 let syncInProgress = false;
+let initialSyncDone = false;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 
+// --- Sync progress tracking (shared module) ---
+import { getSyncProgress } from './progress.js';
+
 function getLLMConfig() {
+  let model = settings.selectedModel ?? 'claude-haiku-4-5-20251001';
+
+  // Make sure the selected model's provider actually has a key configured
+  const provider = model.startsWith('gpt') ? 'openai' : 'anthropic';
+  const hasKey = provider === 'openai' ? !!settings.openaiApiKey : !!settings.anthropicApiKey;
+  if (!hasKey) {
+    // Fall back to a model whose provider has a key
+    if (settings.anthropicApiKey) {
+      model = 'claude-haiku-4-5-20251001';
+    } else if (settings.openaiApiKey) {
+      model = 'gpt-4o-mini';
+    }
+  }
+
   return {
-    model: settings.selectedModel ?? 'claude-haiku-4-5-20251001',
+    model,
     anthropicApiKey: settings.anthropicApiKey,
     openaiApiKey: settings.openaiApiKey,
   };
 }
 
-async function runSync(hardReset = false): Promise<void> {
+async function runSync(hardReset = false, fullMetadataRefresh = false): Promise<void> {
   if (syncInProgress) {
     console.log('[scheduler] Sync already in progress, skipping.');
     return;
@@ -36,11 +88,14 @@ async function runSync(hardReset = false): Promise<void> {
   try {
     const result = await unifiedSync({
       hardReset,
+      fullMetadataRefresh,
       llmConfig: getLLMConfig(),
     });
     console.log(`[scheduler] Sync done: ${result.messagesAdded} messages, ${result.handlesAdded} handles.`);
+    initialSyncDone = true;
   } catch (err) {
     console.error('[scheduler] Sync error:', err);
+    initialSyncDone = true; // Mark done even on error so the UI doesn't hang
   } finally {
     syncInProgress = false;
   }
@@ -199,11 +254,7 @@ async function handleAsk(
     return;
   }
 
-  const parsed = await parseNaturalQuery(query, {
-    model: settings.selectedModel ?? 'claude-haiku-4-5-20251001',
-    anthropicApiKey: settings.anthropicApiKey,
-    openaiApiKey: settings.openaiApiKey,
-  });
+  const parsed = await parseNaturalQuery(query, getLLMConfig());
 
   // Manual filters from the client take precedence over LLM-parsed ones
   const manualFrom = params.get('from') || undefined;
@@ -418,6 +469,21 @@ async function handlePutSettings(
     settings.selectedModel = update.selectedModel || undefined;
   }
 
+  // If the selected model's provider no longer has a key, reset to the first available model
+  if (settings.selectedModel) {
+    const provider = settings.selectedModel.startsWith('gpt') ? 'openai' : 'anthropic';
+    const hasKey = provider === 'openai' ? !!settings.openaiApiKey : !!settings.anthropicApiKey;
+    if (!hasKey) {
+      const fallback = AVAILABLE_MODELS.find((m) =>
+        m.provider === 'anthropic' ? !!settings.anthropicApiKey : !!settings.openaiApiKey
+      );
+      if (fallback) {
+        console.log(`[settings] Model "${settings.selectedModel}" no longer has a key, switching to "${fallback.id}"`);
+        settings.selectedModel = fallback.id;
+      }
+    }
+  }
+
   saveSettings(settings);
   jsonResponse(res, { ok: true });
 }
@@ -459,11 +525,7 @@ const server = http.createServer(async (req, res) => {
             break;
           }
           try {
-            const llmConfig = {
-              model: settings.selectedModel ?? 'claude-haiku-4-5-20251001',
-              anthropicApiKey: settings.anthropicApiKey,
-              openaiApiKey: settings.openaiApiKey,
-            };
+            const llmConfig = getLLMConfig();
             const summary = await refreshChatMetadata(chatId, llmConfig);
             jsonResponse(res, { chat_id: chatId, summary });
           } catch (err) {
@@ -473,11 +535,7 @@ const server = http.createServer(async (req, res) => {
         }
         case '/api/update-metadata': {
           try {
-            const llmConfig = {
-              model: settings.selectedModel ?? 'claude-haiku-4-5-20251001',
-              anthropicApiKey: settings.anthropicApiKey,
-              openaiApiKey: settings.openaiApiKey,
-            };
+            const llmConfig = getLLMConfig();
             const sinceParam = params.get('since');
             const since = sinceParam ? new Date(sinceParam) : undefined;
             const minMessages = parseInt(params.get('minMessages') || '1', 10);
@@ -490,6 +548,7 @@ const server = http.createServer(async (req, res) => {
         }
         case '/api/actions/complete': {
           const actionIdStr = params.get('id');
+          const type = params.get('type') ?? 'action_item'; // 'action_item' | 'follow_up'
           if (!actionIdStr) {
             errorResponse(res, 'Missing required parameter: id');
             break;
@@ -501,7 +560,28 @@ const server = http.createServer(async (req, res) => {
           }
           try {
             const db = await getPglite();
-            await db.query('UPDATE actions_needed SET completed = true WHERE id = $1', [actionId]);
+            const table = type === 'follow_up' ? 'suggested_follow_ups' : 'action_items';
+            await db.query(`UPDATE ${table} SET completed = true WHERE id = $1`, [actionId]);
+            jsonResponse(res, { ok: true });
+          } catch (err) {
+            errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
+        case '/api/events/delete': {
+          const eventIdStr = params.get('id');
+          if (!eventIdStr) {
+            errorResponse(res, 'Missing required parameter: id');
+            break;
+          }
+          const eventId = parseInt(eventIdStr, 10);
+          if (isNaN(eventId)) {
+            errorResponse(res, 'id must be a number');
+            break;
+          }
+          try {
+            const db = await getPglite();
+            await db.query('UPDATE key_events SET removed = true WHERE id = $1', [eventId]);
             jsonResponse(res, { ok: true });
           } catch (err) {
             errorResponse(res, (err as Error).message, 500);
@@ -513,14 +593,34 @@ const server = http.createServer(async (req, res) => {
             jsonResponse(res, { error: 'Sync already in progress' }, 409);
             break;
           }
-          syncInProgress = true;
-          try {
-            const result = await unifiedSync({ llmConfig: getLLMConfig() });
-            jsonResponse(res, result);
-          } catch (err) {
-            errorResponse(res, (err as Error).message, 500);
-          } finally {
-            syncInProgress = false;
+          const days = parseInt(params.get('days') ?? '7', 10) || 7;
+          const hard = params.get('hardReset') === 'true';
+
+          if (hard) {
+            // Hard reset runs in background — return immediately so the client doesn't time out
+            initialSyncDone = false;
+            syncInProgress = true;
+            jsonResponse(res, { started: true, hardReset: true });
+            unifiedSync({ hardReset: true, fullMetadataRefresh: true, metadataDays: days, llmConfig: getLLMConfig() })
+              .then(() => {
+                console.log('[sync] Hard reset complete.');
+                initialSyncDone = true;
+              })
+              .catch((err) => {
+                console.error('[sync] Hard reset failed:', err);
+                initialSyncDone = true;
+              })
+              .finally(() => { syncInProgress = false; });
+          } else {
+            syncInProgress = true;
+            try {
+              const result = await unifiedSync({ fullMetadataRefresh: true, metadataDays: days, llmConfig: getLLMConfig() });
+              jsonResponse(res, result);
+            } catch (err) {
+              errorResponse(res, (err as Error).message, 500);
+            } finally {
+              syncInProgress = false;
+            }
           }
           break;
         }
@@ -533,7 +633,12 @@ const server = http.createServer(async (req, res) => {
     // GET routes
     switch (url.pathname) {
       case '/health':
-        jsonResponse(res, { status: 'ok' });
+        jsonResponse(res, {
+          status: 'ok',
+          ready: initialSyncDone,
+          syncing: syncInProgress,
+          progress: syncInProgress ? getSyncProgress() : undefined,
+        });
         break;
       case '/api/search':
         await handleSearch(params, res);
@@ -601,9 +706,7 @@ const server = http.createServer(async (req, res) => {
       case '/api/actions': {
         const db = await getPglite();
         const showCompleted = params.get('completed') === 'true';
-        const actionsResult = await db.query(
-          `SELECT an.*,
-                  CASE
+        const chatNameExpr = `CASE
                     WHEN c.display_name IS NOT NULL AND c.display_name != '' THEN c.display_name
                     WHEN (SELECT COUNT(*) FROM chat_handle_join _chj WHERE _chj.chat_id = c.id) > 1 THEN
                       'chat with ' || (
@@ -624,13 +727,43 @@ const server = http.createServer(async (req, res) => {
                       WHERE _chj3.chat_id = c.id
                       LIMIT 1
                     )
-                  END as chat_name
-           FROM actions_needed an
-           LEFT JOIN chat c ON c.id = an.chat_id
-           ${showCompleted ? '' : 'WHERE an.completed = false'}
-           ORDER BY an.due_date ASC NULLS LAST, an.created_at DESC`
+                  END`;
+
+        const eventsResult = await db.query(
+          `SELECT ke.*, ${chatNameExpr} as chat_name
+           FROM key_events ke
+           LEFT JOIN chat c ON c.id = ke.chat_id
+           ${showCompleted ? '' : 'WHERE (ke.removed = false OR ke.removed IS NULL)'}
+           ORDER BY ke.date ASC NULLS LAST, ke.created_at DESC`
         );
-        jsonResponse(res, { actions: actionsResult.rows });
+
+        const followUpsResult = await db.query(
+          `SELECT sf.*, ${chatNameExpr} as chat_name
+           FROM suggested_follow_ups sf
+           LEFT JOIN chat c ON c.id = sf.chat_id
+           ${showCompleted ? '' : 'WHERE sf.completed = false'}
+           ORDER BY sf.date ASC NULLS LAST, sf.created_at DESC`
+        );
+
+        const actionItemsResult = await db.query(
+          `SELECT ai.*, ${chatNameExpr} as chat_name
+           FROM action_items ai
+           LEFT JOIN chat c ON c.id = ai.chat_id
+           ${showCompleted ? '' : 'WHERE ai.completed = false'}
+           ORDER BY ai.date ASC NULLS LAST, ai.created_at DESC`
+        );
+
+        jsonResponse(res, {
+          key_events: eventsResult.rows,
+          suggested_follow_ups: followUpsResult.rows,
+          action_items: actionItemsResult.rows,
+        });
+        break;
+      }
+      case '/api/logs': {
+        const limit = parseInt(params.get('limit') || '200', 10);
+        const logs = getRecentLogs(limit);
+        jsonResponse(res, { logs });
         break;
       }
       default:
@@ -647,13 +780,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function start(): Promise<void> {
-  const hardReset = process.argv.includes('--hard-reset');
+  let hardReset = process.argv.includes('--hard-reset');
 
-  console.log('Initializing PGLite...');
-  await getPglite();
-  await initSchema();
-  console.log('PGLite ready.');
-
+  // Start the HTTP server immediately so health checks respond while we initialize
   server.listen(PORT, HOST, () => {
     console.log(`OpenSearch API server running at http://${HOST}:${PORT}`);
     console.log('Endpoints:');
@@ -669,11 +798,44 @@ async function start(): Promise<void> {
     console.log('  POST /api/sync');
   });
 
+  // Initialize PGLite (after server is listening so health checks respond)
+  console.log('Initializing PGLite...');
+  const pg = await getPglite();
+  await initSchema();
+  console.log('PGLite ready.');
+
+  // Verify database integrity — if corrupted, wipe and force hard reset
+  if (!hardReset) {
+    const healthy = await verifyDatabase();
+    if (!healthy) {
+      console.warn('[startup] Database corrupted — wiping and forcing hard reset.');
+      await wipePgliteData();
+      await getPglite();
+      await initSchema();
+      hardReset = true;
+    }
+  }
+
+  // If we already have synced data, let the app be usable immediately
+  if (!hardReset) {
+    try {
+      const result = await pg.query('SELECT last_synced FROM sync_meta WHERE id = 1');
+      if (result.rows.length > 0) {
+        console.log('[startup] Existing data found — app is ready, sync will run in background.');
+        initialSyncDone = true;
+      }
+    } catch {
+      // Table may not exist yet on very first run
+    }
+  }
+
   // Run sync on startup (hard reset if --hard-reset flag passed), then schedule hourly
   if (hardReset) {
     console.log('[startup] Hard reset requested via --hard-reset flag.');
   }
-  runSync(hardReset).catch((err) => console.error('[scheduler] Startup sync failed:', err));
+  // Full metadata refresh only on first sync or hard reset; incremental otherwise
+  const isFirstSync = !initialSyncDone;
+  runSync(hardReset, hardReset || isFirstSync).catch((err) => console.error('[scheduler] Startup sync failed:', err));
   syncTimer = setInterval(() => {
     runSync().catch((err) => console.error('[scheduler] Scheduled sync failed:', err));
   }, SYNC_INTERVAL_MS);

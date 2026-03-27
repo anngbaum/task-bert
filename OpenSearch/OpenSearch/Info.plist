@@ -6,6 +6,8 @@
 	<string>OpenSearch</string>
 	<key>CFBundleName</key>
 	<string>OpenSearch</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>OpenSearch needs calendar access to add events from your conversations.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

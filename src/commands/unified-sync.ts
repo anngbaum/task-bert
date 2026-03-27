@@ -26,6 +26,7 @@ import { embed } from './embed.js';
 import { updateMetadata } from './update-metadata.js';
 import type { LLMConfig } from '../llm/query-parser.js';
 import { DATA_DIR } from '../config.js';
+import { updateSyncProgress } from '../progress.js';
 
 const PG_DATA_DIR = path.join(DATA_DIR, 'pgdata');
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
@@ -37,6 +38,10 @@ export interface UnifiedSyncOptions {
   skipEmbed?: boolean;
   /** Skip metadata/actions update */
   skipMetadata?: boolean;
+  /** Use full metadata windows instead of incremental since-last-update */
+  fullMetadataRefresh?: boolean;
+  /** Number of days to look back for metadata (summaries + actions). Defaults to 7. */
+  metadataDays?: number;
   /** Embedding batch size */
   embedBatchSize?: number;
   /** LLM config for metadata — if omitted, loads from settings.json */
@@ -50,13 +55,23 @@ export interface UnifiedSyncResult {
   wasHardReset: boolean;
 }
 
-interface SavedAction {
+interface SavedFollowUp {
   chat_id: number;
-  created_at: string;
-  due_date: string | null;
-  action_descriptor: string;
-  completed: boolean;
   message_id: number | null;
+  title: string;
+  date: string | null;
+  key_event_id: number | null;
+  completed: boolean;
+  created_at: string;
+}
+
+interface SavedActionItem {
+  chat_id: number;
+  message_id: number;
+  title: string;
+  date: string | null;
+  completed: boolean;
+  created_at: string;
 }
 
 function loadSettings(): { anthropicApiKey?: string; openaiApiKey?: string; selectedModel?: string } {
@@ -92,42 +107,56 @@ async function setLastSynced(pg: import('@electric-sql/pglite').PGlite, date: Da
   );
 }
 
-async function backupCompletedActions(): Promise<SavedAction[]> {
+async function backupCompletedItems(): Promise<{ followUps: SavedFollowUp[]; actionItems: SavedActionItem[] }> {
   try {
     const db = await getPglite();
-    const result = await db.query(
-      'SELECT chat_id, created_at, due_date, action_descriptor, completed, message_id FROM actions_needed WHERE completed = true'
+    const followUps = await db.query(
+      'SELECT chat_id, message_id, title, date, key_event_id, completed, created_at FROM suggested_follow_ups WHERE completed = true'
     );
-    return result.rows as SavedAction[];
+    const actionItems = await db.query(
+      'SELECT chat_id, message_id, title, date, completed, created_at FROM action_items WHERE completed = true'
+    );
+    return {
+      followUps: followUps.rows as SavedFollowUp[],
+      actionItems: actionItems.rows as SavedActionItem[],
+    };
   } catch {
-    return [];
+    return { followUps: [], actionItems: [] };
   }
 }
 
-async function restoreCompletedActions(actions: SavedAction[]): Promise<void> {
-  if (actions.length === 0) return;
+async function restoreCompletedItems(items: { followUps: SavedFollowUp[]; actionItems: SavedActionItem[] }): Promise<void> {
   const db = await getPglite();
-  for (const a of actions) {
+  for (const f of items.followUps) {
     await db.query(
-      `INSERT INTO actions_needed (chat_id, created_at, due_date, action_descriptor, completed, message_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [a.chat_id, a.created_at, a.due_date, a.action_descriptor, a.completed, a.message_id]
+      `INSERT INTO suggested_follow_ups (chat_id, message_id, title, date, key_event_id, completed, created_at)
+       VALUES ($1, $2, $3, $4, NULL, $5, $6)`,
+      [f.chat_id, f.message_id, f.title, f.date, f.completed, f.created_at]
     );
   }
-  console.log(`  Restored ${actions.length} completed action(s).`);
+  for (const a of items.actionItems) {
+    await db.query(
+      `INSERT INTO action_items (chat_id, message_id, title, date, completed, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [a.chat_id, a.message_id, a.title, a.date, a.completed, a.created_at]
+    );
+  }
+  const total = items.followUps.length + items.actionItems.length;
+  if (total > 0) console.log(`  Restored ${total} completed item(s).`);
 }
 
 /**
  * Core ETL: extract from SQLite, transform, and load into PGLite.
  * Used by both incremental sync and hard reset.
  */
-async function runETL(afterDate?: Date): Promise<{ messagesAdded: number; handlesAdded: number }> {
+async function runETL(afterDate?: Date, stageBase: number = 0): Promise<{ messagesAdded: number; handlesAdded: number }> {
   const sqlite = openSqlite();
   verifySqliteTables(sqlite);
   const pg = await getPglite();
 
   // Handles (with contact resolution)
   console.log('Syncing handles...');
+  updateSyncProgress('etl', 'Syncing contacts...', stageBase);
   const contactMap = await buildContactMap();
   const handles = extractHandles(sqlite);
   let resolvedCount = 0;
@@ -141,6 +170,7 @@ async function runETL(afterDate?: Date): Promise<{ messagesAdded: number; handle
 
   // Chats
   console.log('Syncing chats...');
+  updateSyncProgress('etl', 'Importing conversations...', stageBase + 2);
   const chats = extractChats(sqlite);
   await loadChats(pg, chats);
 
@@ -149,12 +179,14 @@ async function runETL(afterDate?: Date): Promise<{ messagesAdded: number; handle
     ? `since ${afterDate.toISOString().split('T')[0]}`
     : '(all messages)';
   console.log(`Extracting messages ${dateLabel}...`);
+  updateSyncProgress('etl', 'Importing messages...', stageBase + 5);
   let totalMessages = 0;
   const batchGen = extractMessagesBatched(sqlite, 5000, afterDate);
   for (const rawBatch of batchGen) {
     const transformed = transformMessages(rawBatch);
     const loaded = await loadMessages(pg, transformed);
     totalMessages += loaded;
+    updateSyncProgress('etl', `Imported ${totalMessages.toLocaleString()} messages...`, stageBase + 5);
     process.stdout.write(`  Loaded ${totalMessages} messages\r`);
   }
   console.log(`  Loaded ${totalMessages} messages total`);
@@ -175,6 +207,7 @@ async function runETL(afterDate?: Date): Promise<{ messagesAdded: number; handle
 
   // Full-text search
   console.log('Updating text search index...');
+  updateSyncProgress('etl', 'Building search index...', stageBase + 15);
   const ftsCount = await populateTextSearch(pg);
   console.log(`  Indexed ${ftsCount} messages for full-text search`);
 
@@ -183,53 +216,72 @@ async function runETL(afterDate?: Date): Promise<{ messagesAdded: number; handle
 }
 
 export async function unifiedSync(options: UnifiedSyncOptions = {}): Promise<UnifiedSyncResult> {
-  const { hardReset = false, skipEmbed = false, skipMetadata = false, embedBatchSize = 200 } = options;
+  const { hardReset = false, skipEmbed = false, skipMetadata = false, fullMetadataRefresh = false, embedBatchSize = 200, metadataDays = 7 } = options;
 
   if (hardReset) {
     // --- Hard reset: wipe and rebuild from scratch ---
     console.log('=== Hard Reset ===');
+    updateSyncProgress('setup', 'Preparing database...', 0);
 
-    // Backup completed actions
-    const completedActions = await backupCompletedActions();
+    // Wipe pgdata — close PGLite first, wait for it to release file locks
+    console.log('Closing PGLite...');
+    await closePglite();
+    // Brief pause to let file handles release
+    await new Promise((r) => setTimeout(r, 500));
 
-    // Wipe pgdata
     if (fs.existsSync(PG_DATA_DIR)) {
       console.log('Wiping PGLite database...');
-      await closePglite();
       fs.rmSync(PG_DATA_DIR, { recursive: true, force: true });
     }
 
+    // Verify the directory is actually gone
+    if (fs.existsSync(PG_DATA_DIR)) {
+      console.error('[hard-reset] WARNING: pgdata directory still exists after wipe, retrying...');
+      await new Promise((r) => setTimeout(r, 1000));
+      fs.rmSync(PG_DATA_DIR, { recursive: true, force: true });
+    }
+
+    console.log(`[hard-reset] pgdata wiped: ${!fs.existsSync(PG_DATA_DIR)}`);
+
     // Copy fresh chat.db
     console.log('Copying fresh chat.db...');
+    updateSyncProgress('setup', 'Copying message database...', 2);
     await copyDb({ force: true });
 
-    // Init fresh PGLite
+    // Init fresh PGLite — this creates a brand new database
     const pg = await getPglite();
     await initSchema();
 
-    // Full ingest (no date filter = all messages)
-    const etlResult = await runETL();
+    // Verify fresh state
+    const msgCount = await pg.query('SELECT count(*) as cnt FROM message');
+    console.log(`[hard-reset] Fresh DB message count: ${(msgCount.rows[0] as any).cnt}`);
 
-    // Restore completed actions
-    await restoreCompletedActions(completedActions);
+    // Ingest last 90 days of messages
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    updateSyncProgress('etl', 'Importing messages...', 5);
+    const etlResult = await runETL(ninetyDaysAgo, 5);
 
     // Embed all
     if (!skipEmbed) {
       console.log('\nEmbedding messages...');
+      updateSyncProgress('embedding', 'Generating embeddings...', 25);
       await embed({ batchSize: embedBatchSize });
     }
 
     // Update metadata for recent conversations
+    // Summaries: last 14 days; Actions: last 30 days
     if (!skipMetadata) {
       const llmConfig = getLLMConfig(options);
-      const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-      console.log('\nUpdating chat metadata...');
-      await updateMetadata(llmConfig, { since: fourteenDaysAgo, minMessages: 2 });
+      const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
+      console.log(`\nUpdating chat metadata (summaries: ${metadataDays}d, actions: ${metadataDays}d)...`);
+      updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
+      await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 2, actionsSince: metadataCutoff });
     }
 
     const now = new Date();
     await setLastSynced(pg, now);
 
+    updateSyncProgress('done', 'Complete!', 100);
     console.log('\nHard reset complete!');
     return {
       messagesAdded: etlResult.messagesAdded,
@@ -240,6 +292,7 @@ export async function unifiedSync(options: UnifiedSyncOptions = {}): Promise<Uni
   }
 
   // --- Incremental sync ---
+  updateSyncProgress('setup', 'Copying message database...', 0);
   console.log('Copying fresh chat.db...');
   await copyDb({ force: true });
 
@@ -247,14 +300,33 @@ export async function unifiedSync(options: UnifiedSyncOptions = {}): Promise<Uni
   await initSchema();
 
   const lastSynced = await getLastSynced(pg);
-  const threeMonthsAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  const afterDate = lastSynced ?? threeMonthsAgo;
-  console.log(lastSynced
-    ? `Last synced: ${lastSynced.toISOString()}`
-    : 'No previous sync — importing last 3 months'
-  );
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const isFirstSync = !lastSynced;
 
-  const etlResult = await runETL(afterDate);
+  // Check if we already have 90 days of message coverage
+  let afterDate: Date;
+  if (isFirstSync) {
+    afterDate = ninetyDaysAgo;
+    console.log('No previous sync — importing last 90 days');
+  } else {
+    const oldestResult = await pg.query('SELECT MIN(date) as oldest FROM message WHERE date IS NOT NULL');
+    const oldestDate = oldestResult.rows.length > 0 && (oldestResult.rows[0] as any).oldest
+      ? new Date((oldestResult.rows[0] as any).oldest)
+      : null;
+
+    if (oldestDate && oldestDate <= ninetyDaysAgo) {
+      // Already have 90-day coverage — just sync since last update
+      afterDate = lastSynced!;
+      console.log(`Last synced: ${lastSynced!.toISOString()} — 90-day coverage OK`);
+    } else {
+      // Gap detected — backfill to 90 days
+      afterDate = ninetyDaysAgo;
+      console.log(`Last synced: ${lastSynced!.toISOString()} — backfilling to 90 days`);
+    }
+  }
+
+  updateSyncProgress('etl', 'Importing messages...', 5);
+  const etlResult = await runETL(afterDate, 5);
 
   const now = new Date();
   await setLastSynced(pg, now);
@@ -262,19 +334,28 @@ export async function unifiedSync(options: UnifiedSyncOptions = {}): Promise<Uni
   // Embed new messages
   if (!skipEmbed) {
     console.log('Embedding new messages...');
+    updateSyncProgress('embedding', 'Generating embeddings...', isFirstSync ? 25 : 50);
     await embed({ batchSize: embedBatchSize });
   }
 
-  // Update metadata/actions — always re-check at least the last 7 days
-  // so action items are re-evaluated even if the last sync was recent
+  // Metadata: incremental (since last update) by default,
+  // full 14d/30d window on startup or explicit resync.
   if (!skipMetadata) {
     const llmConfig = getLLMConfig(options);
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const metadataSince = afterDate < sevenDaysAgo ? afterDate : sevenDaysAgo;
-    console.log('Updating metadata for conversations active in the last 7 days...');
-    await updateMetadata(llmConfig, { since: metadataSince, minMessages: 1 });
+    if (fullMetadataRefresh) {
+      const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
+      const metadataSince = afterDate < metadataCutoff ? afterDate : metadataCutoff;
+      console.log(`Updating metadata (full refresh — summaries: ${metadataDays}d, actions: ${metadataDays}d)...`);
+      updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
+      await updateMetadata(llmConfig, { since: metadataSince, minMessages: 1, actionsSince: metadataCutoff });
+    } else {
+      console.log('Updating metadata (incremental — since last update)...');
+      updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
+      await updateMetadata(llmConfig, { minMessages: 1 });
+    }
   }
 
+  updateSyncProgress('done', 'Complete!', 100);
   console.log('\nSync complete!');
   return {
     messagesAdded: etlResult.messagesAdded,

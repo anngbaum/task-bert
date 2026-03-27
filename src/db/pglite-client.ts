@@ -41,19 +41,50 @@ export async function initSchema(): Promise<void> {
 
   // Migrations for existing databases
   try {
-    await db.exec('ALTER TABLE actions_needed ADD COLUMN IF NOT EXISTS message_id INTEGER;');
+    await db.exec('ALTER TABLE key_events ADD COLUMN IF NOT EXISTS removed BOOLEAN DEFAULT FALSE;');
   } catch {
-    // Column already exists
+    // Column may already exist
+  }
+}
+
+/**
+ * Run cheap queries against core tables to verify the database isn't corrupted.
+ * Returns true if healthy, false if something is wrong.
+ */
+export async function verifyDatabase(): Promise<boolean> {
+  try {
+    const db = await getPglite();
+    // Check that core tables exist and are queryable
+    await db.query('SELECT count(*) FROM message');
+    await db.query('SELECT count(*) FROM handle');
+    await db.query('SELECT count(*) FROM chat');
+    await db.query('SELECT last_synced FROM sync_meta WHERE id = 1');
+    return true;
+  } catch (err) {
+    console.error('[health] Database verification failed:', err);
+    return false;
+  }
+}
+
+/**
+ * Wipe the PGLite data directory and reset the client so a fresh DB is created on next access.
+ */
+export async function wipePgliteData(): Promise<void> {
+  await closePglite();
+  if (fs.existsSync(PG_DATA_DIR)) {
+    fs.rmSync(PG_DATA_DIR, { recursive: true, force: true });
+    console.log('[health] Wiped corrupted PGLite data directory.');
   }
 }
 
 export async function closePglite(): Promise<void> {
   if (client) {
+    const c = client;
+    client = null; // Clear reference first to prevent re-use
     try {
-      await client.close();
-    } catch {
-      // Client may already be closing or its data dir was removed
+      await c.close();
+    } catch (err) {
+      console.warn('[pglite] Error closing client:', err);
     }
-    client = null;
   }
 }
