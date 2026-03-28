@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ThreadView: View {
     @ObservedObject var viewModel: SearchViewModel
+    @State private var copiedMessageId: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -139,6 +140,32 @@ struct ThreadView: View {
         .padding(.horizontal, 6)
         .background(isAnchor ? Color.yellow.opacity(0.3) : Color.clear)
         .cornerRadius(6)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .onTapGesture {
+            if let text = msg.text {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                withAnimation { copiedMessageId = msg.id }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation {
+                        if copiedMessageId == msg.id { copiedMessageId = nil }
+                    }
+                }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if copiedMessageId == msg.id {
+                Label("Copied", systemImage: "doc.on.doc")
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                    .transition(.opacity)
+            }
+        }
     }
 
     private func linkPreviewCard(_ lp: LinkPreviewDTO) -> some View {

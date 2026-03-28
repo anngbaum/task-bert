@@ -35,7 +35,7 @@ program
   .action(async (opts) => {
     try {
       await unifiedSync({
-        hardReset: true,
+        mode: 'hardReset',
         embedBatchSize: parseInt(opts.batchSize, 10),
       });
     } finally {
@@ -127,6 +127,7 @@ program
 
     try {
       await unifiedSync({
+        mode: 'pullLatest',
         skipEmbed: opts.skipEmbed,
         skipMetadata: opts.skipMetadata,
       });
@@ -144,7 +145,7 @@ program
   .action(async (opts) => {
     try {
       await unifiedSync({
-        hardReset: true,
+        mode: 'hardReset',
         skipEmbed: opts.skipEmbed,
         skipMetadata: opts.skipMetadata,
         embedBatchSize: parseInt(opts.batchSize, 10),

@@ -81,8 +81,8 @@ export async function sync(): Promise<SyncResult> {
   const batchGen = extractMessagesBatched(sqlite, 5000, afterDate);
   for (const rawBatch of batchGen) {
     const transformed = transformMessages(rawBatch);
-    const loaded = await loadMessages(pg, transformed);
-    totalMessages += loaded;
+    const { totalProcessed } = await loadMessages(pg, transformed);
+    totalMessages += totalProcessed;
     process.stdout.write(`  Loaded ${totalMessages} messages\r`);
   }
   console.log(`  Loaded ${totalMessages} new messages total`);

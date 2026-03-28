@@ -98,22 +98,85 @@ mkdir -p "$DIST_DIR"
 
 DMG_PATH="$DIST_DIR/OpenSearch.dmg"
 DMG_TEMP="$PROJECT_DIR/build/dmg-staging"
+DMG_RW="$PROJECT_DIR/build/OpenSearch-rw.dmg"
+DMG_BG="$PROJECT_DIR/build/dmg-background.png"
 
-# Create staging directory with app and Applications symlink
+# Generate background image with arrow and instructions
+echo "Generating DMG background..."
+python3 "$SCRIPT_DIR/create-dmg-background.py"
+
+# Create staging directory with app, Applications symlink, and background
 rm -rf "$DMG_TEMP"
-mkdir -p "$DMG_TEMP"
+mkdir -p "$DMG_TEMP/.background"
 cp -R "$APP_PATH" "$DMG_TEMP/"
 ln -s /Applications "$DMG_TEMP/Applications"
+cp "$DMG_BG" "$DMG_TEMP/.background/background.png"
 
-# Create DMG
+# Create read-write DMG first (so we can customize it)
+rm -f "$DMG_RW"
 hdiutil create \
   -volname "OpenSearch" \
   -srcfolder "$DMG_TEMP" \
   -ov \
-  -format UDZO \
-  "$DMG_PATH"
+  -format UDRW \
+  -size 300m \
+  "$DMG_RW"
 
 rm -rf "$DMG_TEMP"
+
+# Detach any existing OpenSearch volumes to avoid name collisions
+hdiutil detach "/Volumes/OpenSearch" -force 2>/dev/null || true
+
+# Mount the read-write DMG and customize with AppleScript
+MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$DMG_RW" | grep '/Volumes/' | sed 's/.*\/Volumes/\/Volumes/')
+VOLUME_NAME=$(basename "$MOUNT_DIR")
+echo "Mounted at: $MOUNT_DIR (volume: $VOLUME_NAME)"
+
+# Use AppleScript to configure the Finder window layout
+# Give Finder time to register the volume
+sleep 2
+
+osascript -e '
+tell application "Finder"
+  set theVolume to POSIX file "/Volumes/OpenSearch" as alias
+  tell folder theVolume
+    open
+    delay 2
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set bounds of container window to {100, 100, 760, 500}
+
+    set viewOptions to the icon view options of container window
+    set arrangement of viewOptions to not arranged
+    set icon size of viewOptions to 80
+    set text size of viewOptions to 12
+    set background picture of viewOptions to file ".background:background.png"
+
+    -- Position app icon on the left, Applications on the right
+    set position of item "OpenSearch.app" of container window to {165, 80}
+    set position of item "Applications" of container window to {495, 80}
+
+    close
+    open
+    update without registering applications
+    delay 2
+    close
+  end tell
+end tell
+'
+
+# Ensure Finder releases the volume
+sync
+sleep 2
+
+# Unmount
+hdiutil detach "$MOUNT_DIR" -force
+
+# Convert to compressed read-only DMG
+rm -f "$DMG_PATH"
+hdiutil convert "$DMG_RW" -format UDZO -o "$DMG_PATH"
+rm -f "$DMG_RW"
 
 DMG_SIZE=$(du -h "$DMG_PATH" | cut -f1)
 echo ""

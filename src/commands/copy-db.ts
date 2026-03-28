@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import Database from 'better-sqlite3';
 import { DATA_DIR } from '../config.js';
 
-const SOURCE_DIR = path.join(os.homedir(), 'Library', 'Messages');
-const SOURCE_DB = path.join(SOURCE_DIR, 'chat.db');
+const SOURCE_DB = path.join(os.homedir(), 'Library', 'Messages', 'chat.db');
 const DEST_DB = path.join(DATA_DIR, 'chat.db');
 
 export async function copyDb(options: { force?: boolean }): Promise<void> {
@@ -13,11 +13,14 @@ export async function copyDb(options: { force?: boolean }): Promise<void> {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  // Check if already copied
+  // Check if already up to date (compare source DB + WAL mtimes)
   if (fs.existsSync(DEST_DB) && !options.force) {
-    const srcStat = fs.statSync(SOURCE_DB);
-    const destStat = fs.statSync(DEST_DB);
-    if (destStat.mtimeMs >= srcStat.mtimeMs) {
+    const srcMtime = Math.max(
+      fs.statSync(SOURCE_DB).mtimeMs,
+      fs.existsSync(SOURCE_DB + '-wal') ? fs.statSync(SOURCE_DB + '-wal').mtimeMs : 0
+    );
+    const destMtime = fs.statSync(DEST_DB).mtimeMs;
+    if (destMtime >= srcMtime) {
       console.log('chat.db is already up to date. Use --force to re-copy.');
       return;
     }
@@ -25,23 +28,23 @@ export async function copyDb(options: { force?: boolean }): Promise<void> {
   }
 
   try {
-    // Copy main database file
-    console.log(`Copying ${SOURCE_DB} → ${DEST_DB}`);
-    fs.copyFileSync(SOURCE_DB, DEST_DB);
+    // Use SQLite backup API for a consistent, atomic snapshot that
+    // properly includes any uncommitted WAL data.
+    console.log(`Backing up ${SOURCE_DB} → ${DEST_DB}`);
+    const src = new Database(SOURCE_DB, { readonly: true });
 
-    // Copy WAL and SHM files if they exist (for consistency)
-    for (const ext of ['-wal', '-shm']) {
-      const src = SOURCE_DB + ext;
-      const dest = DEST_DB + ext;
-      if (fs.existsSync(src)) {
-        fs.copyFileSync(src, dest);
-        console.log(`Copied ${path.basename(src)}`);
-      }
+    // Remove stale destination so backup starts fresh
+    for (const ext of ['', '-wal', '-shm']) {
+      const f = DEST_DB + ext;
+      if (fs.existsSync(f)) fs.unlinkSync(f);
     }
+
+    await src.backup(DEST_DB);
+    src.close();
 
     const stat = fs.statSync(DEST_DB);
     const sizeMB = (stat.size / 1024 / 1024).toFixed(1);
-    console.log(`Done! Copied ${sizeMB} MB to ./data/chat.db`);
+    console.log(`Done! Backed up ${sizeMB} MB to ./data/chat.db`);
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EACCES') {
       console.error('\nPermission denied reading chat.db.');

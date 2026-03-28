@@ -42,8 +42,58 @@ export async function initSchema(): Promise<void> {
   // Migrations for existing databases
   try {
     await db.exec('ALTER TABLE key_events ADD COLUMN IF NOT EXISTS removed BOOLEAN DEFAULT FALSE;');
+    await db.exec('ALTER TABLE key_events ADD COLUMN IF NOT EXISTS location TEXT;');
   } catch {
-    // Column may already exist
+    // Columns may already exist
+  }
+
+  // Migration: merge action_items + suggested_follow_ups → tasks
+  try {
+    const hasOldTables = await db.query(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'action_items') as has_actions,
+              EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'suggested_follow_ups') as has_followups`
+    );
+    const { has_actions, has_followups } = hasOldTables.rows[0] as { has_actions: boolean; has_followups: boolean };
+
+    if (has_actions || has_followups) {
+      // Check if there's actually data to migrate (tables might exist but be empty on fresh installs)
+      const tasksExist = await db.query(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tasks') as exists`);
+      if ((tasksExist.rows[0] as any).exists) {
+        const taskCount = await db.query('SELECT count(*) as cnt FROM tasks');
+        const needsMigration = (taskCount.rows[0] as any).cnt === '0' || (taskCount.rows[0] as any).cnt === 0;
+
+        if (needsMigration) {
+          if (has_actions) {
+            await db.exec(`
+              INSERT INTO tasks (chat_id, message_id, title, date, priority, completed, created_at)
+              SELECT chat_id, message_id, title, date, 'high', completed, created_at
+              FROM action_items
+            `);
+            console.log('[migration] Migrated action_items → tasks (priority: high)');
+          }
+          if (has_followups) {
+            await db.exec(`
+              INSERT INTO tasks (chat_id, message_id, title, date, priority, key_event_id, completed, created_at)
+              SELECT chat_id, message_id, title, date, 'low', key_event_id, completed, created_at
+              FROM suggested_follow_ups
+            `);
+            console.log('[migration] Migrated suggested_follow_ups → tasks (priority: low)');
+          }
+        }
+      }
+
+      // Drop old tables to remove stale FK constraints on key_events
+      if (has_followups) {
+        await db.exec('DROP TABLE IF EXISTS suggested_follow_ups');
+        console.log('[migration] Dropped legacy suggested_follow_ups table');
+      }
+      if (has_actions) {
+        await db.exec('DROP TABLE IF EXISTS action_items');
+        console.log('[migration] Dropped legacy action_items table');
+      }
+    }
+  } catch (err) {
+    console.warn('[migration] Tasks migration skipped:', (err as Error).message);
   }
 }
 

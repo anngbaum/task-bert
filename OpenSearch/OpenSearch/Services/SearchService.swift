@@ -231,15 +231,13 @@ actor SearchService {
 
     struct ActionsResponse: Decodable {
         let key_events: [KeyEvent]
-        let suggested_follow_ups: [SuggestedFollowUp]
-        let action_items: [ActionItem]
+        let tasks: [TaskItem]
     }
 
-    func completeAction(id: Int, type: String = "action_item") async throws {
+    func completeTask(id: Int) async throws {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/actions/complete"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "id", value: String(id)),
-            URLQueryItem(name: "type", value: type),
         ]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"

@@ -63,27 +63,19 @@ CREATE TABLE IF NOT EXISTS key_events (
   message_id INTEGER,
   title TEXT NOT NULL,
   date TIMESTAMPTZ,
+  location TEXT,
   removed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS suggested_follow_ups (
+CREATE TABLE IF NOT EXISTS tasks (
   id SERIAL PRIMARY KEY,
   chat_id INTEGER NOT NULL,
   message_id INTEGER,
   title TEXT NOT NULL,
   date TIMESTAMPTZ,
+  priority TEXT NOT NULL DEFAULT 'low',
   key_event_id INTEGER REFERENCES key_events(id),
-  completed BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS action_items (
-  id SERIAL PRIMARY KEY,
-  chat_id INTEGER NOT NULL,
-  message_id INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  date TIMESTAMPTZ,
   completed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

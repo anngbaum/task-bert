@@ -61,11 +61,35 @@ export async function loadChats(db: PGlite, chats: Chat[]): Promise<number> {
   return loaded;
 }
 
-export async function loadMessages(db: PGlite, messages: Message[]): Promise<number> {
-  let loaded = 0;
+export interface LoadMessagesResult {
+  totalProcessed: number;
+  newMessageIds: Set<number>;
+}
+
+export async function loadMessages(db: PGlite, messages: Message[]): Promise<LoadMessagesResult> {
+  let totalProcessed = 0;
+  const newMessageIds = new Set<number>();
 
   for (let i = 0; i < messages.length; i += MULTI_ROW_BATCH) {
     const batch = messages.slice(i, i + MULTI_ROW_BATCH);
+    const batchIds = batch.map((m) => m.id);
+
+    // Check which IDs already exist and which have null text (will be updated)
+    const existing = await db.query(
+      `SELECT id, text FROM message WHERE id = ANY($1::int[])`,
+      [batchIds]
+    );
+    const existingById = new Map((existing.rows as { id: number; text: string | null }[]).map((r) => [r.id, r.text]));
+    const batchById = new Map(batch.map((m) => [m.id, m.text]));
+    for (const id of batchIds) {
+      if (!existingById.has(id)) {
+        // Genuinely new message
+        newMessageIds.add(id);
+      } else if (existingById.get(id) == null && batchById.get(id) != null) {
+        // Existing message getting its text populated (e.g. attributedBody fix)
+        newMessageIds.add(id);
+      }
+    }
 
     // Build multi-row insert. We handle tsvector separately with a post-UPDATE
     // to keep the INSERT simple and avoid issues with problematic text.
@@ -92,9 +116,10 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<num
     ]);
 
     try {
-      const { sql, params } = buildMultiInsert('message', columns, rows, '(id) DO NOTHING');
+      const { sql, params } = buildMultiInsert('message', columns, rows,
+        '(id) DO UPDATE SET text = EXCLUDED.text WHERE message.text IS NULL AND EXCLUDED.text IS NOT NULL');
       await db.query(sql, params);
-      loaded += batch.length;
+      totalProcessed += batch.length;
     } catch {
       // Fall back to individual inserts on error
       for (const m of batch) {
@@ -104,7 +129,7 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<num
                                   handle_id, service, associated_message_type,
                                   thread_originator_guid, balloon_bundle_id, has_attachments)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-             ON CONFLICT (id) DO NOTHING`,
+             ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text WHERE message.text IS NULL AND EXCLUDED.text IS NOT NULL`,
             [
               m.id, m.guid, m.text, m.is_from_me,
               m.date?.toISOString() ?? null,
@@ -114,7 +139,7 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<num
               m.thread_originator_guid, m.balloon_bundle_id, m.has_attachments,
             ]
           );
-          loaded++;
+          totalProcessed++;
         } catch {
           // Skip problematic messages
         }
@@ -122,7 +147,21 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<num
     }
   }
 
-  return loaded;
+  return { totalProcessed, newMessageIds };
+}
+
+/**
+ * Given the full set of chat-message joins and a set of new message IDs,
+ * return the chat IDs that received new messages.
+ */
+export function getAffectedChatIds(joins: ChatMessageJoin[], newMessageIds: Set<number>): Set<number> {
+  const chatIds = new Set<number>();
+  for (const join of joins) {
+    if (newMessageIds.has(join.message_id)) {
+      chatIds.add(join.chat_id);
+    }
+  }
+  return chatIds;
 }
 
 export async function loadChatMessageJoins(

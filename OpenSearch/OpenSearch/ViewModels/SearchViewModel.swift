@@ -59,10 +59,8 @@ final class SearchViewModel: ObservableObject {
 
     // Actions panel
     @Published private(set) var keyEvents: [KeyEvent] = []
-    @Published private(set) var suggestedFollowUps: [SuggestedFollowUp] = []
-    @Published private(set) var actionItems: [ActionItem] = []
-    @Published private(set) var completedFollowUps: [SuggestedFollowUp] = []
-    @Published private(set) var completedActionItems: [ActionItem] = []
+    @Published private(set) var tasks: [TaskItem] = []
+    @Published private(set) var completedTasks: [TaskItem] = []
     @Published private(set) var removedEvents: [KeyEvent] = []
     @Published private(set) var isLoadingActions: Bool = false
     @Published var showActionsPanel: Bool = false
@@ -444,10 +442,8 @@ final class SearchViewModel: ObservableObject {
         lastSyncedAt = nil
         chatMetadata = []
         keyEvents = []
-        suggestedFollowUps = []
-        actionItems = []
-        completedFollowUps = []
-        completedActionItems = []
+        tasks = []
+        completedTasks = []
         removedEvents = []
         results = []
         contacts = []
@@ -600,12 +596,10 @@ final class SearchViewModel: ObservableObject {
         do {
             let response = try await service.fetchActions()
             keyEvents = response.key_events
-            suggestedFollowUps = response.suggested_follow_ups
-            actionItems = response.action_items
+            tasks = response.tasks
         } catch {
             keyEvents = []
-            suggestedFollowUps = []
-            actionItems = []
+            tasks = []
         }
         isLoadingActions = false
     }
@@ -614,37 +608,22 @@ final class SearchViewModel: ObservableObject {
     func loadCompletedActions() async {
         do {
             let response = try await service.fetchActions(includeCompleted: true)
-            completedFollowUps = response.suggested_follow_ups.filter { $0.completed }
-            completedActionItems = response.action_items.filter { $0.completed }
+            completedTasks = response.tasks.filter { $0.completed }
             removedEvents = response.key_events.filter { $0.removed == true }
         } catch {
-            completedFollowUps = []
-            completedActionItems = []
+            completedTasks = []
             removedEvents = []
         }
     }
 
     @MainActor
-    func completeActionItem(id: Int) async {
+    func completeTask(id: Int) async {
         do {
-            try await service.completeAction(id: id, type: "action_item")
-            if let item = actionItems.first(where: { $0.id == id }) {
-                completedActionItems.insert(item, at: 0)
+            try await service.completeTask(id: id)
+            if let task = tasks.first(where: { $0.id == id }) {
+                completedTasks.insert(task, at: 0)
             }
-            actionItems.removeAll { $0.id == id }
-        } catch {
-            // Silently fail — user can retry
-        }
-    }
-
-    @MainActor
-    func completeFollowUp(id: Int) async {
-        do {
-            try await service.completeAction(id: id, type: "follow_up")
-            if let item = suggestedFollowUps.first(where: { $0.id == id }) {
-                completedFollowUps.insert(item, at: 0)
-            }
-            suggestedFollowUps.removeAll { $0.id == id }
+            tasks.removeAll { $0.id == id }
         } catch {
             // Silently fail — user can retry
         }

@@ -154,8 +154,8 @@ struct ContentView: View {
                 if tab == .conversations && !viewModel.chatMetadata.isEmpty {
                     badgeView(count: viewModel.chatMetadata.count, color: .blue)
                 }
-                if tab == .actions && !viewModel.actionItems.isEmpty {
-                    badgeView(count: viewModel.actionItems.count + viewModel.suggestedFollowUps.count, color: .orange)
+                if tab == .actions && !viewModel.tasks.isEmpty {
+                    badgeView(count: viewModel.tasks.count, color: .orange)
                 }
             }
             .padding(.horizontal, 10)

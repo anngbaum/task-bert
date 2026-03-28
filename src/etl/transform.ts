@@ -34,10 +34,24 @@ function extractTextFromAttributedBody(blob: Buffer | null): string | null {
       const tag = buf[i + 1];
 
       if (tag === 0x2b) {
-        // Short string: next byte is the length
-        const len = buf[i + 2];
-        if (i + 3 + len > buf.length) return null;
-        const raw = buf.subarray(i + 3, i + 3 + len).toString('utf-8');
+        // Next byte(s) encode the length. If < 0x80, it's the length directly.
+        // If 0x81, the next 2 bytes are a 16-bit big-endian length.
+        const lenByte = buf[i + 2];
+        let len: number;
+        let textStart: number;
+        if (lenByte < 0x80) {
+          len = lenByte;
+          textStart = i + 3;
+        } else if (lenByte === 0x81) {
+          // 0x81 signals a 2-byte little-endian length follows
+          if (i + 5 > buf.length) return null;
+          len = buf.readUInt16LE(i + 3);
+          textStart = i + 5;
+        } else {
+          return null; // unsupported multi-byte length
+        }
+        if (textStart + len > buf.length) return null;
+        const raw = buf.subarray(textStart, textStart + len).toString('utf-8');
         return cleanExtractedText(raw);
       }
 

@@ -3,11 +3,21 @@ import { callLLM } from '../llm/query-parser.js';
 import type { LLMConfig } from '../llm/query-parser.js';
 import { updateSyncProgress } from '../progress.js';
 
+/** Format a Date as a short local string like "Mon Mar 25, 8:36 PM" */
+function localDate(d: Date): string {
+  return d.toLocaleString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
+
 interface ChatMessage {
   id: number;
   sender: string;
   text: string;
   date: string;
+  /** Raw ISO date for comparisons (localDate strips the year) */
+  isoDate: string;
 }
 
 interface ChatMessages {
@@ -67,7 +77,7 @@ async function getChatsWithNewMessages(since: Date | null, minMessages: number =
     const chat = chatResult.rows[0] as { display_name: string | null; chat_identifier: string } | undefined;
     const chatName = chat?.display_name || chat?.chat_identifier || `Chat ${chatId}`;
 
-    // Get 20 most recent messages with sender info
+    // Get 50 most recent messages with sender info
     const msgResult = await db.query(
       `SELECT m.id, m.text, m.is_from_me, m.date,
               COALESCE(h.display_name, h.identifier, 'Unknown') as sender
@@ -78,7 +88,7 @@ async function getChatsWithNewMessages(since: Date | null, minMessages: number =
          AND m.text IS NOT NULL AND m.text != ''
          AND m.associated_message_type = 0
        ORDER BY m.date DESC
-       LIMIT 20`,
+       LIMIT 50`,
       [chatId]
     );
 
@@ -88,7 +98,8 @@ async function getChatsWithNewMessages(since: Date | null, minMessages: number =
         id: r.id,
         sender: r.is_from_me ? 'Me' : r.sender,
         text: r.text,
-        date: new Date(r.date).toISOString(),
+        date: localDate(new Date(r.date)),
+        isoDate: new Date(r.date).toISOString(),
       }));
 
     if (messages.length > 0) {
@@ -113,10 +124,10 @@ function buildMetadataPrompt(chats: ChatMessages[]): string {
 export interface MetadataOptions {
   since?: Date;
   minMessages?: number;
-  /** If set, run action extraction with a separate (wider) time window */
-  actionsSince?: Date;
   /** If true, skip action extraction entirely (caller will handle it) */
   skipActions?: boolean;
+  /** If provided, only update metadata for these specific chat IDs */
+  chatIds?: Set<number>;
 }
 
 /**
@@ -172,7 +183,8 @@ async function getChatsWithoutMetadata(since: Date, minMessages: number = 1): Pr
         id: r.id,
         sender: r.is_from_me ? 'Me' : r.sender,
         text: r.text,
-        date: new Date(r.date).toISOString(),
+        date: localDate(new Date(r.date)),
+        isoDate: new Date(r.date).toISOString(),
       }));
 
     if (messages.length > 0) {
@@ -190,9 +202,19 @@ export async function updateMetadata(config: LLMConfig, options: MetadataOptions
   const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
   // Use whichever is more recent: the requested date or 60 days ago
   const effectiveSince = since && since > sixtyDaysAgo ? since : sixtyDaysAgo;
-  const chats = await getChatsWithNewMessages(effectiveSince, minMessages);
+  let chats = await getChatsWithNewMessages(effectiveSince, minMessages);
 
-  // Also pick up any chats that are missing metadata entirely (within the same window)
+  // If caller specified specific chat IDs, filter the new-messages list to only those
+  if (options.chatIds) {
+    const before = chats.length;
+    chats = chats.filter((c) => options.chatIds!.has(c.chatId));
+    if (before !== chats.length) {
+      console.log(`[metadata] Filtered to ${chats.length}/${before} chat(s) with new messages.`);
+    }
+  }
+
+  // Always pick up chats that are missing metadata entirely (within the same window)
+  // — these need summaries regardless of whether they had new messages in this sync
   const missingChats = await getChatsWithoutMetadata(effectiveSince, minMessages);
   const existingChatIds = new Set(chats.map((c) => c.chatId));
   for (const mc of missingChats) {
@@ -204,70 +226,55 @@ export async function updateMetadata(config: LLMConfig, options: MetadataOptions
     console.log(`[metadata] Found ${missingChats.length} chat(s) missing metadata.`);
   }
 
-  if (chats.length === 0) {
-    console.log('[metadata] No chats with new messages to summarize.');
-    return 0;
-  }
-
-  console.log(`[metadata] Summarizing ${chats.length} chat(s)...`);
-
   const now = new Date();
   const today = now.toISOString().split('T')[0];
   const db = await getPglite();
 
   let totalSummaries = 0;
 
-  for (let i = 0; i < chats.length; i++) {
-    const chat = chats[i];
-    console.log(`  [metadata] ${i + 1}/${chats.length}: "${chat.chatName}"...`);
-    updateSyncProgress('metadata', `Summarizing chat ${i + 1}/${chats.length}: ${chat.chatName}`, 85 + Math.round((i / chats.length) * 12));
+  if (chats.length === 0) {
+    console.log('[metadata] No chats with new messages to summarize.');
+  } else {
+    console.log(`[metadata] Summarizing ${chats.length} chat(s)...`);
 
-    try {
-      const msgLines = chat.messages.map((m) =>
-        `[${m.date}] ${m.sender}: ${m.text}`
-      ).join('\n');
+    for (let i = 0; i < chats.length; i++) {
+      const chat = chats[i];
+      console.log(`  [metadata] ${i + 1}/${chats.length}: "${chat.chatName}"...`);
+      updateSyncProgress('metadata', `Summarizing chat ${i + 1}/${chats.length}: ${chat.chatName}`, 85 + Math.round((i / chats.length) * 12));
 
-      const summary = (await callLLM(
-        config,
-        `You summarize iMessage conversations. Today is ${today}.
+      try {
+        const msgLines = chat.messages.map((m) =>
+          `[${m.date}] ${m.sender}: ${m.text}`
+        ).join('\n');
+
+        const summary = (await callLLM(
+          config,
+          `You summarize iMessage conversations. Today is ${today}.
 
 Produce a brief 1-3 sentence summary capturing the key topics, tone, and any notable context (plans being made, questions asked, etc.).
 
 Respond with ONLY the summary text. No JSON, no markdown, no explanation.`,
-        `=== Chat "${chat.chatName}" ===\n${msgLines}`,
-        512
-      )).trim();
+          `=== Chat "${chat.chatName}" ===\n${msgLines}`,
+          512
+        )).trim();
 
-      await db.query(
-        `INSERT INTO chat_metadata (chat_id, summary, last_updated)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (chat_id) DO UPDATE SET summary = $2, last_updated = $3`,
-        [chat.chatId, summary, now.toISOString()]
-      );
-      totalSummaries++;
-      console.log(`    → ${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}`);
-    } catch (err) {
-      console.error(`    ✗ Failed: ${(err as Error).message}`);
+        await db.query(
+          `INSERT INTO chat_metadata (chat_id, summary, last_updated)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (chat_id) DO UPDATE SET summary = $2, last_updated = $3`,
+          [chat.chatId, summary, now.toISOString()]
+        );
+        totalSummaries++;
+        console.log(`    → ${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}`);
+      } catch (err) {
+        console.error(`    ✗ Failed: ${(err as Error).message}`);
+      }
     }
   }
 
-  // Run action extraction — optionally with a wider time window
-  if (!options.skipActions) {
-    if (options.actionsSince) {
-      // Fetch a broader set of chats for action extraction
-      const actionChats = await getChatsWithNewMessages(options.actionsSince, minMessages);
-      const actionChatIds = new Set(actionChats.map((c) => c.chatId));
-      // Also include any chats we already fetched for summaries
-      for (const c of chats) {
-        if (!actionChatIds.has(c.chatId)) {
-          actionChats.push(c);
-        }
-      }
-      console.log(`[actions] Checking ${actionChats.length} chat(s) active since ${options.actionsSince.toISOString().split('T')[0]}...`);
-      await updateActions(config, actionChats);
-    } else {
-      await updateActions(config, chats);
-    }
+  // Run action extraction on the same set of chats
+  if (!options.skipActions && chats.length > 0) {
+    await updateActions(config, chats);
   }
 
   // Only advance the timestamp if at least one summary succeeded —
@@ -291,9 +298,9 @@ export async function refreshChatMetadata(chatId: number, config: LLMConfig): Pr
   if (!chat) throw new Error(`Chat ${chatId} not found`);
   const chatName = chat.display_name || chat.chat_identifier;
 
-  // Get 30 most recent messages
+  // Get 50 most recent messages (with id for action extraction)
   const msgResult = await db.query(
-    `SELECT m.text, m.is_from_me, m.date,
+    `SELECT m.id, m.text, m.is_from_me, m.date,
             COALESCE(h.display_name, h.identifier, 'Unknown') as sender
      FROM message m
      JOIN chat_message_join cmj ON cmj.message_id = m.id
@@ -302,16 +309,18 @@ export async function refreshChatMetadata(chatId: number, config: LLMConfig): Pr
        AND m.text IS NOT NULL AND m.text != ''
        AND m.associated_message_type = 0
      ORDER BY m.date DESC
-     LIMIT 30`,
+     LIMIT 50`,
     [chatId]
   );
 
   const messages = (msgResult.rows as any[])
     .reverse()
     .map((r) => ({
+      id: r.id,
       sender: r.is_from_me ? 'Me' : r.sender,
       text: r.text,
-      date: new Date(r.date).toISOString(),
+      date: localDate(new Date(r.date)),
+      isoDate: new Date(r.date).toISOString(),
     }));
 
   if (messages.length === 0) throw new Error(`No messages found for chat ${chatId}`);
@@ -339,15 +348,13 @@ Respond with ONLY the summary text. No JSON, no markdown, no explanation.`,
     [chatId, summary, now.toISOString()]
   );
 
+  // Also re-run action extraction for this chat only
+  await updateActions(config, [{ chatId, chatName, messages }]);
+
   return summary;
 }
 
-export async function updateActions(config: LLMConfig, chats?: ChatMessages[]): Promise<number> {
-  if (!chats) {
-    const since = await getLastMetadataUpdate();
-    chats = await getChatsWithNewMessages(since);
-  }
-
+export async function updateActions(config: LLMConfig, chats: ChatMessages[]): Promise<number> {
   const db = await getPglite();
 
   if (chats.length === 0) {
@@ -356,7 +363,13 @@ export async function updateActions(config: LLMConfig, chats?: ChatMessages[]): 
   }
 
   const now = new Date();
-  const today = now.toISOString().split('T')[0];
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const todayDay = dayNames[now.getDay()];
+  // Use local date (not UTC) so day-of-week and date are consistent
+  const todayDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const today = `${todayDay}, ${todayDate}`;
+  const twelveHoursAgo = localDate(new Date(now.getTime() - 12 * 60 * 60 * 1000));
+  const twentyFourHoursAgo = localDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
   const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
   // Split chats into recent (≤2 weeks) and older (>2 weeks) based on latest message
@@ -364,7 +377,7 @@ export async function updateActions(config: LLMConfig, chats?: ChatMessages[]): 
   const olderChats: ChatMessages[] = [];
   for (const chat of chats) {
     const latestMsg = chat.messages[chat.messages.length - 1];
-    const latestDate = latestMsg ? new Date(latestMsg.date) : new Date(0);
+    const latestDate = latestMsg ? new Date(latestMsg.isoDate) : new Date(0);
     if (latestDate >= twoWeeksAgo) {
       recentChats.push(chat);
     } else {
@@ -376,72 +389,74 @@ export async function updateActions(config: LLMConfig, chats?: ChatMessages[]): 
 
   const recentSystemPrompt = `You analyze iMessage conversations and extract items for "Me" (the user). Today is ${today}.
 
-IMPORTANT: Each task should appear ONCE — either as a follow-up OR an action item, never both.
-- Use ACTION ITEM for explicit commitments or direct requests ("I'll send that", "Can you call me?")
-- Use FOLLOW-UP for softer nudges where no promise was made ("might want to check in", "birthday coming up")
-- If in doubt, pick the one that fits best. Never create both for the same underlying task.
-
 ## 1. KEY EVENTS
 Notable events, plans, or milestones mentioned in the conversation that are TODAY (${today}) or in the future.
 Do NOT include events whose date has already passed.
-Examples: "Dinner on Saturday night", "Maddy's birthday next week", "Trip to LA next month"
+Examples: "Dinner on Saturday night at Nobu, 7pm", "Maddy's birthday next week", "Trip to LA next month"
 
-## 2. SUGGESTED FOLLOW-UPS
-Softer suggestions for "Me" to follow up on something that is still relevant. These can reference a key event.
-Do NOT create follow-ups for things tied to dates that have already passed.
-Examples: "Wish Maddy happy birthday", "Check in with Mom after her appointment"
+If a previously extracted event has been updated with new details in the conversation (e.g., a time, location, or plan was confirmed), update the title and/or date to reflect the latest information. Be specific — include venue, time, and other confirmed details.
 
-Create a follow-up when:
-- A key event is coming up and "Me" might want to acknowledge it
-- Someone shared news that warrants a check-in later
-- The conversation trailed off and "Me" might want to re-engage
+## 2. TASKS
+Things "Me" should do, ranging from explicit commitments to softer follow-ups. Each task has a priority:
 
-## 3. ACTION ITEMS
-Explicit, concrete things "Me" has committed to or been directly asked to do that are still relevant.
-Examples: "Send Mike the photos", "Book the restaurant for Friday"
+**high** — Explicit commitments or direct requests. "Me" agreed to do something or was directly asked.
+Examples: "Send Mike the photos", "Book the restaurant for Friday", "Call Mom back"
 
-Create an action item ONLY when:
-- "Me" explicitly agreed or offered to do something ("I'll send you that", "Let me check")
-- Someone made a direct, specific request ("Can you send me those photos?", "Call me")
-- The item is still actionable — if it references a date or event that has already passed (before ${today}), do NOT include it
+**low** — Softer suggestions. No explicit promise was made, but "Me" might want to follow up.
+Examples: "Check in with Sarah about her new job", "Wish Maddy happy birthday", "Follow up on weekend plans"
 
-DO NOT create action items for:
-- Conversations that ended naturally with no pending obligations
-- Rhetorical questions or casual chat
+Create a task when:
+- "Me" explicitly agreed or offered to do something (high priority)
+- Someone made a direct, specific request (high priority)
+- Someone asked "Me" a specific question and "Me" has NOT responded yet. This is an unanswered question.
+  - If the question was asked more than 24 hours ago (before ${twentyFourHoursAgo}): **high** priority — "Respond to [Name]'s question about [topic]"
+  - If the question was asked more than 12 hours ago (before ${twelveHoursAgo}): **low** priority — "Respond to [Name]'s question about [topic]"
+  - If the question was asked less than 12 hours ago: do not create a task yet.
+- A key event is coming up and "Me" might want to acknowledge it (low priority)
+- Someone shared news that warrants a check-in later (low priority)
+- The conversation trailed off and "Me" might want to re-engage (low priority)
+
+DO NOT create tasks for:
+- Conversations that ended naturally with no pending obligations (but DO create tasks for unanswered questions even if the conversation seems casual)
+- Rhetorical questions or casual greetings (e.g. "lol", "haha", "nice") — but a real question like "how was your trip?" or "what happened with X?" IS a specific question that deserves a task if unanswered
 - Things "Me" already handled later in the conversation
-- Anything tied to a date that has already passed (e.g. "call me Tuesday" when Tuesday was last week)
-- One-time verification codes, OTPs, 2FA codes, or login tokens (e.g. "Your code is 483291")
+- Anything tied to a date that has already passed (before ${today})
+- One-time verification codes, OTPs, 2FA codes, or login tokens
+- Soft follow-ups like "check in on X" if the conversation has clearly moved on to a new topic since then
+
+Each task should appear ONCE. Never create duplicate tasks for the same underlying thing.
 
 Each message is tagged with its database ID like [MSG-123]. Use this to identify the originating message.
 
-You will be given the conversation AND any previously extracted items. Your response is the COMPLETE, authoritative list of what's still relevant. Items you omit will be removed. Include both new items and any previously extracted items that are still valid.
+Your response is the COMPLETE, authoritative list of what's still relevant. Items you omit will be removed. Include both new items and any previously extracted items that are still valid.
 
-- If a previously extracted item is still relevant, include it in your response (you may update the title/date).
+- If a previously extracted item is still relevant, include it in your response (you may update the title/date/priority).
 - If a previously extracted item has been resolved in the conversation or is no longer relevant, simply omit it.
-- Do NOT include items the user has already marked as completed or removed (these are listed separately and excluded from your input).
+- If the conversation has moved on to a new topic and a low-priority task like "check in about X" is stale, omit it.
+- Do NOT include items the user has already marked as completed or removed.
 
 Respond with ONLY valid JSON:
 {
   "key_events": [
-    { "message_id": 456, "title": "Dinner at Nobu on Saturday", "date": "2026-03-28T19:00:00Z" }
+    { "message_id": 456, "title": "Dinner on Saturday", "date": "2026-03-28T19:00:00Z", "location": "Nobu Malibu" }
   ],
-  "suggested_follow_ups": [
-    { "message_id": 456, "title": "Confirm dinner reservation", "date": "2026-03-27T00:00:00Z", "key_event_index": 0 }
-  ],
-  "action_items": [
-    { "message_id": 789, "title": "Send Mike the address", "date": null }
+  "tasks": [
+    { "message_id": 789, "title": "Send Mike the address", "date": null, "priority": "high", "key_event_index": null },
+    { "message_id": 456, "title": "Confirm dinner reservation", "date": "2026-03-27T00:00:00Z", "priority": "low", "key_event_index": 0 }
   ]
 }
 
 FIELD GUIDANCE:
 - "message_id": The MSG-### ID of the originating message. Always include this.
 - "title": Be specific. Include the person's name and what the item is about.
+- "priority": "high" for explicit commitments/requests, "low" for softer follow-ups.
 - "date": Based on conversation content, not arbitrary defaults.
   - If they say "dinner tomorrow" and today is ${today}, the date is tomorrow.
   - If they say "this weekend", use Saturday.
   - If they mention a specific date ("on the 25th", "March 30"), use that date.
   - If no timeframe is mentioned, use null.
-- "key_event_index": Zero-based index into the key_events array in THIS response. Use this to link a follow-up to a key event you're creating in the same response. Use null if unrelated to a key event.
+- "location": For key events, the venue or place if mentioned (e.g. "Nobu Malibu", "Central Park"). Use null if not mentioned.
+- "key_event_index": Zero-based index into the key_events array in THIS response. Use to link a task to an event. Use null if unrelated.
 - If nothing to extract, return empty arrays for all fields.
 
 No markdown fencing, no explanation.`;
@@ -457,8 +472,8 @@ Examples: "Maddy's birthday on April 5", "Trip to LA in May", "Baby due in June"
 
 Only include events whose date is TODAY or later. Skip past events.
 
-## 2. SUGGESTED FOLLOW-UPS
-A follow-up tied to an upcoming key event — something "Me" might want to do before or on that date.
+## 2. TASKS
+Low-priority tasks tied to upcoming key events — things "Me" might want to do before or on that date.
 Examples: "Wish Maddy happy birthday", "Ask about LA trip plans", "Check in closer to the due date"
 
 Each message is tagged with its database ID like [MSG-123]. Use this to identify the originating message.
@@ -468,20 +483,19 @@ Your response is the COMPLETE, authoritative list of what's still relevant. Item
 Respond with ONLY valid JSON:
 {
   "key_events": [
-    { "message_id": 456, "title": "Maddy's birthday", "date": "2026-04-05T00:00:00Z" }
+    { "message_id": 456, "title": "Maddy's birthday", "date": "2026-04-05T00:00:00Z", "location": null }
   ],
-  "suggested_follow_ups": [
-    { "message_id": 456, "title": "Wish Maddy happy birthday", "date": "2026-04-05T00:00:00Z", "key_event_index": 0 }
-  ],
-  "action_items": []
+  "tasks": [
+    { "message_id": 456, "title": "Wish Maddy happy birthday", "date": "2026-04-05T00:00:00Z", "priority": "low", "key_event_index": 0 }
+  ]
 }
 
 FIELD GUIDANCE:
 - "message_id": The MSG-### ID of the originating message. Always include this.
 - "title": Be specific. Include the person's name.
+- "priority": Always "low" for old conversations — do not create high-priority tasks.
 - "date": Must be a real date from the conversation, today (${today}) or later.
 - "key_event_index": Zero-based index into the key_events array in THIS response.
-- "action_items": Always return an empty array — do not create action items for old conversations.
 - If nothing to extract, return empty arrays for all fields.
 
 No markdown fencing, no explanation.`;
@@ -494,20 +508,16 @@ No markdown fencing, no explanation.`;
   for (let i = 0; i < allChats.length; i++) {
     const chat = allChats[i];
     const latestMsg = chat.messages[chat.messages.length - 1];
-    const isRecent = latestMsg ? new Date(latestMsg.date) >= twoWeeksAgo : false;
+    const isRecent = latestMsg ? new Date(latestMsg.isoDate) >= twoWeeksAgo : false;
     const systemPrompt = isRecent ? recentSystemPrompt : olderSystemPrompt;
 
     // Get existing active items for this chat — the LLM decides what to keep
     const existingEvents = await db.query(
-      `SELECT id, title, date FROM key_events WHERE chat_id = $1 AND (removed = false OR removed IS NULL) ORDER BY created_at DESC`,
+      `SELECT id, title, date, location FROM key_events WHERE chat_id = $1 AND (removed = false OR removed IS NULL) ORDER BY created_at DESC`,
       [chat.chatId]
     );
-    const existingFollowUps = await db.query(
-      `SELECT id, title, date FROM suggested_follow_ups WHERE chat_id = $1 AND completed = false ORDER BY created_at DESC`,
-      [chat.chatId]
-    );
-    const existingActionItems = await db.query(
-      `SELECT id, title, date FROM action_items WHERE chat_id = $1 AND completed = false ORDER BY created_at DESC`,
+    const existingTasks = await db.query(
+      `SELECT id, title, date, priority FROM tasks WHERE chat_id = $1 AND completed = false ORDER BY created_at DESC`,
       [chat.chatId]
     );
 
@@ -516,42 +526,30 @@ No markdown fencing, no explanation.`;
       `SELECT title FROM key_events WHERE chat_id = $1 AND removed = true ORDER BY created_at DESC`,
       [chat.chatId]
     );
-    const completedFollowUps = await db.query(
-      `SELECT title FROM suggested_follow_ups WHERE chat_id = $1 AND completed = true ORDER BY created_at DESC`,
-      [chat.chatId]
-    );
-    const completedActions = await db.query(
-      `SELECT title FROM action_items WHERE chat_id = $1 AND completed = true ORDER BY created_at DESC`,
+    const completedTasks = await db.query(
+      `SELECT title FROM tasks WHERE chat_id = $1 AND completed = true ORDER BY created_at DESC`,
       [chat.chatId]
     );
 
     let existingBlock = '';
-    const events = existingEvents.rows as { id: number; title: string; date: string | null }[];
+    const events = existingEvents.rows as { id: number; title: string; date: string | null; location: string | null }[];
     if (events.length > 0) {
-      existingBlock += `\n\nPREVIOUSLY EXTRACTED KEY EVENTS (include in your response if still relevant, omit if not):\n${events.map((e) =>
-        `- "${e.title}" (date: ${e.date ?? 'none'})`
+      existingBlock += `\n\nPREVIOUSLY EXTRACTED KEY EVENTS (include if still relevant — update title/date/location if the conversation has new details, omit if past or irrelevant):\n${events.map((e) =>
+        `- "${e.title}" (date: ${e.date ?? 'none'}, location: ${e.location ?? 'none'})`
       ).join('\n')}`;
     }
 
-    const followUps = existingFollowUps.rows as { id: number; title: string; date: string | null }[];
-    if (followUps.length > 0) {
-      existingBlock += `\n\nPREVIOUSLY EXTRACTED FOLLOW-UPS (include in your response if still relevant, omit if not):\n${followUps.map((f) =>
-        `- "${f.title}" (date: ${f.date ?? 'none'})`
-      ).join('\n')}`;
-    }
-
-    const actionItems = existingActionItems.rows as { id: number; title: string; date: string | null }[];
-    if (actionItems.length > 0) {
-      existingBlock += `\n\nPREVIOUSLY EXTRACTED ACTION ITEMS (include in your response if still relevant, omit if not):\n${actionItems.map((a) =>
-        `- "${a.title}" (date: ${a.date ?? 'none'})`
+    const tasks = existingTasks.rows as { id: number; title: string; date: string | null; priority: string }[];
+    if (tasks.length > 0) {
+      existingBlock += `\n\nPREVIOUSLY EXTRACTED TASKS (include if still pending — omit if the conversation shows it was completed, resolved, or is no longer relevant):\n${tasks.map((t) =>
+        `- [${t.priority}] "${t.title}" (date: ${t.date ?? 'none'})`
       ).join('\n')}`;
     }
 
     // Add completed/removed items so the LLM knows not to recreate them
     const doneItems: string[] = [];
     for (const r of removedEvents.rows as { title: string }[]) doneItems.push(r.title);
-    for (const r of completedFollowUps.rows as { title: string }[]) doneItems.push(r.title);
-    for (const r of completedActions.rows as { title: string }[]) doneItems.push(r.title);
+    for (const r of completedTasks.rows as { title: string }[]) doneItems.push(r.title);
     if (doneItems.length > 0) {
       existingBlock += `\n\nALREADY COMPLETED OR REMOVED BY USER (do NOT recreate these under any circumstances):\n${doneItems.map((t) =>
         `- "${t}"`
@@ -580,26 +578,23 @@ No markdown fencing, no explanation.`;
         }
       }
       const parsed = JSON.parse(jsonToParse) as {
-        key_events: { message_id: number; title: string; date: string | null }[];
-        suggested_follow_ups: { message_id: number; title: string; date: string | null; key_event_index: number | null }[];
-        action_items: { message_id: number; title: string; date: string | null }[];
+        key_events: { message_id: number; title: string; date: string | null; location: string | null }[];
+        tasks: { message_id: number; title: string; date: string | null; priority: string; key_event_index: number | null }[];
       };
 
       // Delete existing active (non-completed, non-removed) items for this chat —
       // the LLM response is now the source of truth for what's still relevant.
       // User-completed and user-removed items are preserved.
+      await db.query('UPDATE tasks SET key_event_id = NULL WHERE chat_id = $1', [chat.chatId]);
       await db.query('DELETE FROM key_events WHERE chat_id = $1 AND (removed = false OR removed IS NULL)', [chat.chatId]);
-      // Unlink follow-ups from deleted events before deleting
-      await db.query('UPDATE suggested_follow_ups SET key_event_id = NULL WHERE chat_id = $1 AND completed = false', [chat.chatId]);
-      await db.query('DELETE FROM suggested_follow_ups WHERE chat_id = $1 AND completed = false', [chat.chatId]);
-      await db.query('DELETE FROM action_items WHERE chat_id = $1 AND completed = false', [chat.chatId]);
+      await db.query('DELETE FROM tasks WHERE chat_id = $1 AND completed = false', [chat.chatId]);
 
       // Insert fresh items from LLM response
       const newEventIds: number[] = [];
       for (const event of parsed.key_events) {
         const result = await db.query(
-          `INSERT INTO key_events (chat_id, message_id, title, date) VALUES ($1, $2, $3, $4) RETURNING id`,
-          [chat.chatId, event.message_id, event.title, event.date]
+          `INSERT INTO key_events (chat_id, message_id, title, date, location) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [chat.chatId, event.message_id, event.title, event.date, event.location ?? null]
         );
         const newId = (result.rows[0] as { id: number }).id;
         newEventIds.push(newId);
@@ -607,25 +602,17 @@ No markdown fencing, no explanation.`;
         totalNew++;
       }
 
-      for (const followUp of parsed.suggested_follow_ups) {
-        const keyEventId = followUp.key_event_index != null && followUp.key_event_index < newEventIds.length
-          ? newEventIds[followUp.key_event_index]
+      for (const task of (parsed.tasks ?? [])) {
+        const priority = task.priority === 'high' ? 'high' : 'low';
+        const keyEventId = task.key_event_index != null && task.key_event_index < newEventIds.length
+          ? newEventIds[task.key_event_index]
           : null;
 
         await db.query(
-          `INSERT INTO suggested_follow_ups (chat_id, message_id, title, date, key_event_id) VALUES ($1, $2, $3, $4, $5)`,
-          [chat.chatId, followUp.message_id, followUp.title, followUp.date, keyEventId]
+          `INSERT INTO tasks (chat_id, message_id, title, date, priority, key_event_id) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [chat.chatId, task.message_id, task.title, task.date, priority, keyEventId]
         );
-        console.log(`  [follow-ups] ${i + 1}/${allChats.length} "${chat.chatName}" → ${followUp.title}`);
-        totalNew++;
-      }
-
-      for (const action of parsed.action_items) {
-        await db.query(
-          `INSERT INTO action_items (chat_id, message_id, title, date) VALUES ($1, $2, $3, $4)`,
-          [chat.chatId, action.message_id, action.title, action.date]
-        );
-        console.log(`  [action-items] ${i + 1}/${allChats.length} "${chat.chatName}" → ${action.title}`);
+        console.log(`  [tasks] ${i + 1}/${allChats.length} "${chat.chatName}" → [${priority}] ${task.title}`);
         totalNew++;
       }
     } catch (err) {
@@ -639,10 +626,9 @@ No markdown fencing, no explanation.`;
   }
 
   // Verify data actually persisted
-  const verifyEvents = await db.query('SELECT count(*) as cnt FROM key_events');
-  const verifyFollowUps = await db.query('SELECT count(*) as cnt FROM suggested_follow_ups WHERE completed = false');
-  const verifyActions = await db.query('SELECT count(*) as cnt FROM action_items WHERE completed = false');
-  console.log(`\n[actions] Added ${totalNew} new item(s), completed ${totalCompleted}.`);
-  console.log(`[actions] DB verify — events: ${(verifyEvents.rows[0] as any).cnt}, follow-ups: ${(verifyFollowUps.rows[0] as any).cnt}, action items: ${(verifyActions.rows[0] as any).cnt}`);
+  const verifyEvents = await db.query('SELECT count(*) as cnt FROM key_events WHERE (removed = false OR removed IS NULL)');
+  const verifyTasks = await db.query('SELECT count(*) as cnt FROM tasks WHERE completed = false');
+  console.log(`\n[actions] Added ${totalNew} new item(s).`);
+  console.log(`[actions] DB verify — events: ${(verifyEvents.rows[0] as any).cnt}, tasks: ${(verifyTasks.rows[0] as any).cnt}`);
   return totalNew;
 }

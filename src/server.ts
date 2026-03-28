@@ -10,7 +10,7 @@ import { searchHybrid } from './search/hybrid.js';
 import { getContextMessages } from './display/formatter.js';
 import { parseNaturalQuery, disposeQueryParser, AVAILABLE_MODELS } from './llm/query-parser.js';
 import { searchContacts, resolveContactHandleIds } from './contacts/search.js';
-import { unifiedSync } from './commands/unified-sync.js';
+import { unifiedSync, syncSingleConversation } from './commands/unified-sync.js';
 import { updateMetadata, refreshChatMetadata } from './commands/update-metadata.js';
 import { getThread, NotFoundError } from './thread/thread.js';
 import type { SearchOptions } from './types.js';
@@ -79,7 +79,7 @@ function getLLMConfig() {
   };
 }
 
-async function runSync(hardReset = false, fullMetadataRefresh = false): Promise<void> {
+async function runSync(mode: 'hardReset' | 'pullLatest' | 'resync' = 'pullLatest'): Promise<void> {
   if (syncInProgress) {
     console.log('[scheduler] Sync already in progress, skipping.');
     return;
@@ -87,11 +87,10 @@ async function runSync(hardReset = false, fullMetadataRefresh = false): Promise<
   syncInProgress = true;
   try {
     const result = await unifiedSync({
-      hardReset,
-      fullMetadataRefresh,
+      mode,
       llmConfig: getLLMConfig(),
     });
-    console.log(`[scheduler] Sync done: ${result.messagesAdded} messages, ${result.handlesAdded} handles.`);
+    console.log(`[scheduler] Sync done (${mode}): ${result.newMessageCount} new messages across ${result.affectedChatIds.length} chats.`);
     initialSyncDone = true;
   } catch (err) {
     console.error('[scheduler] Sync error:', err);
@@ -526,8 +525,13 @@ const server = http.createServer(async (req, res) => {
           }
           try {
             const llmConfig = getLLMConfig();
-            const summary = await refreshChatMetadata(chatId, llmConfig);
-            jsonResponse(res, { chat_id: chatId, summary });
+            // Pull new messages for this chat, embed, and refresh metadata
+            const { newMessages } = await syncSingleConversation(chatId, llmConfig);
+            // Return the updated summary
+            const db = await getPglite();
+            const metaResult = await db.query('SELECT summary FROM chat_metadata WHERE chat_id = $1', [chatId]);
+            const summary = metaResult.rows.length > 0 ? (metaResult.rows[0] as any).summary : null;
+            jsonResponse(res, { chat_id: chatId, summary, newMessages });
           } catch (err) {
             errorResponse(res, (err as Error).message, 500);
           }
@@ -548,7 +552,6 @@ const server = http.createServer(async (req, res) => {
         }
         case '/api/actions/complete': {
           const actionIdStr = params.get('id');
-          const type = params.get('type') ?? 'action_item'; // 'action_item' | 'follow_up'
           if (!actionIdStr) {
             errorResponse(res, 'Missing required parameter: id');
             break;
@@ -560,8 +563,7 @@ const server = http.createServer(async (req, res) => {
           }
           try {
             const db = await getPglite();
-            const table = type === 'follow_up' ? 'suggested_follow_ups' : 'action_items';
-            await db.query(`UPDATE ${table} SET completed = true WHERE id = $1`, [actionId]);
+            await db.query('UPDATE tasks SET completed = true WHERE id = $1', [actionId]);
             jsonResponse(res, { ok: true });
           } catch (err) {
             errorResponse(res, (err as Error).message, 500);
@@ -600,8 +602,8 @@ const server = http.createServer(async (req, res) => {
             // Hard reset runs in background — return immediately so the client doesn't time out
             initialSyncDone = false;
             syncInProgress = true;
-            jsonResponse(res, { started: true, hardReset: true });
-            unifiedSync({ hardReset: true, fullMetadataRefresh: true, metadataDays: days, llmConfig: getLLMConfig() })
+            jsonResponse(res, { started: true, mode: 'hardReset' });
+            unifiedSync({ mode: 'hardReset', metadataDays: days, llmConfig: getLLMConfig() })
               .then(() => {
                 console.log('[sync] Hard reset complete.');
                 initialSyncDone = true;
@@ -612,9 +614,10 @@ const server = http.createServer(async (req, res) => {
               })
               .finally(() => { syncInProgress = false; });
           } else {
+            // UI resync button: pull latest + metadata for all conversations in window
             syncInProgress = true;
             try {
-              const result = await unifiedSync({ fullMetadataRefresh: true, metadataDays: days, llmConfig: getLLMConfig() });
+              const result = await unifiedSync({ mode: 'resync', metadataDays: days, llmConfig: getLLMConfig() });
               jsonResponse(res, result);
             } catch (err) {
               errorResponse(res, (err as Error).message, 500);
@@ -737,26 +740,20 @@ const server = http.createServer(async (req, res) => {
            ORDER BY ke.date ASC NULLS LAST, ke.created_at DESC`
         );
 
-        const followUpsResult = await db.query(
-          `SELECT sf.*, ${chatNameExpr} as chat_name
-           FROM suggested_follow_ups sf
-           LEFT JOIN chat c ON c.id = sf.chat_id
-           ${showCompleted ? '' : 'WHERE sf.completed = false'}
-           ORDER BY sf.date ASC NULLS LAST, sf.created_at DESC`
-        );
-
-        const actionItemsResult = await db.query(
-          `SELECT ai.*, ${chatNameExpr} as chat_name
-           FROM action_items ai
-           LEFT JOIN chat c ON c.id = ai.chat_id
-           ${showCompleted ? '' : 'WHERE ai.completed = false'}
-           ORDER BY ai.date ASC NULLS LAST, ai.created_at DESC`
+        const tasksResult = await db.query(
+          `SELECT t.*, ${chatNameExpr} as chat_name
+           FROM tasks t
+           LEFT JOIN chat c ON c.id = t.chat_id
+           ${showCompleted ? '' : 'WHERE t.completed = false'}
+           ORDER BY
+             CASE t.priority WHEN 'high' THEN 0 ELSE 1 END,
+             t.date ASC NULLS LAST,
+             t.created_at DESC`
         );
 
         jsonResponse(res, {
           key_events: eventsResult.rows,
-          suggested_follow_ups: followUpsResult.rows,
-          action_items: actionItemsResult.rows,
+          tasks: tasksResult.rows,
         });
         break;
       }
@@ -800,7 +797,15 @@ async function start(): Promise<void> {
 
   // Initialize PGLite (after server is listening so health checks respond)
   console.log('Initializing PGLite...');
-  const pg = await getPglite();
+  let pg;
+  try {
+    pg = await getPglite();
+  } catch (err) {
+    console.warn('[startup] PGLite failed to open — wiping corrupted data and reinitializing.');
+    await wipePgliteData();
+    pg = await getPglite();
+    hardReset = true;
+  }
   await initSchema();
   console.log('PGLite ready.');
 
@@ -829,15 +834,13 @@ async function start(): Promise<void> {
     }
   }
 
-  // Run sync on startup (hard reset if --hard-reset flag passed), then schedule hourly
+  // Run sync on startup, then schedule hourly pull-latest
   if (hardReset) {
     console.log('[startup] Hard reset requested via --hard-reset flag.');
   }
-  // Full metadata refresh only on first sync or hard reset; incremental otherwise
-  const isFirstSync = !initialSyncDone;
-  runSync(hardReset, hardReset || isFirstSync).catch((err) => console.error('[scheduler] Startup sync failed:', err));
+  runSync(hardReset ? 'hardReset' : 'pullLatest').catch((err) => console.error('[scheduler] Startup sync failed:', err));
   syncTimer = setInterval(() => {
-    runSync().catch((err) => console.error('[scheduler] Scheduled sync failed:', err));
+    runSync('pullLatest').catch((err) => console.error('[scheduler] Scheduled sync failed:', err));
   }, SYNC_INTERVAL_MS);
 }
 

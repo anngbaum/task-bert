@@ -3,7 +3,15 @@ import EventKit
 
 struct ActionsPanelView: View {
     @ObservedObject var viewModel: SearchViewModel
-    @State private var expandedSections: Set<String> = ["actions", "followups", "events"]
+    @State private var expandedSections: Set<String> = ["high", "low", "events"]
+
+    private var highPriorityTasks: [TaskItem] {
+        viewModel.tasks.filter { $0.isHighPriority }
+    }
+
+    private var lowPriorityTasks: [TaskItem] {
+        viewModel.tasks.filter { !$0.isHighPriority }
+    }
 
     var body: some View {
         Group {
@@ -15,7 +23,7 @@ struct ActionsPanelView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.keyEvents.isEmpty && viewModel.suggestedFollowUps.isEmpty && viewModel.actionItems.isEmpty && viewModel.completedFollowUps.isEmpty && viewModel.completedActionItems.isEmpty {
+            } else if viewModel.keyEvents.isEmpty && viewModel.tasks.isEmpty && viewModel.completedTasks.isEmpty && viewModel.removedEvents.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "checklist")
                         .font(.system(size: 48))
@@ -23,7 +31,7 @@ struct ActionsPanelView: View {
                     Text("No items yet")
                         .font(.title3)
                         .foregroundStyle(.secondary)
-                    Text("Events, follow-ups, and action items will appear here after syncing")
+                    Text("Tasks and events will appear here after syncing")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
@@ -33,47 +41,45 @@ struct ActionsPanelView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
-                            // Action Items
-                            if !viewModel.actionItems.isEmpty {
+                            // High Priority Tasks
+                            if !highPriorityTasks.isEmpty {
                                 CollapsibleSection(
-                                    title: "Action Items",
+                                    title: "High Priority",
                                     icon: "exclamationmark.circle.fill",
                                     color: .orange,
-                                    count: viewModel.actionItems.count,
-                                    isExpanded: expandedSections.contains("actions"),
-                                    onToggle: { toggleSection("actions") }
+                                    count: highPriorityTasks.count,
+                                    isExpanded: expandedSections.contains("high"),
+                                    onToggle: { toggleSection("high") }
                                 ) {
-                                    ForEach(viewModel.actionItems) { item in
-                                        CompletableRowView(
-                                            title: item.title,
-                                            chatName: item.chat_name,
-                                            date: item.date,
+                                    ForEach(highPriorityTasks) { task in
+                                        TaskRowView(
+                                            task: task,
                                             accentColor: .orange,
-                                            onComplete: { await viewModel.completeActionItem(id: item.id) },
-                                            onTap: { Task { await viewModel.openThread(for: item.message_id) } }
+                                            onComplete: { await viewModel.completeTask(id: task.id) },
+                                            onTap: task.message_id.map { msgId in
+                                                { Task { await viewModel.openThread(for: msgId) } }
+                                            }
                                         )
                                     }
                                 }
                             }
 
-                            // Suggested Follow-ups
-                            if !viewModel.suggestedFollowUps.isEmpty {
+                            // Low Priority Tasks
+                            if !lowPriorityTasks.isEmpty {
                                 CollapsibleSection(
-                                    title: "Follow-ups",
+                                    title: "Low Priority",
                                     icon: "arrow.turn.up.right",
                                     color: .blue,
-                                    count: viewModel.suggestedFollowUps.count,
-                                    isExpanded: expandedSections.contains("followups"),
-                                    onToggle: { toggleSection("followups") }
+                                    count: lowPriorityTasks.count,
+                                    isExpanded: expandedSections.contains("low"),
+                                    onToggle: { toggleSection("low") }
                                 ) {
-                                    ForEach(viewModel.suggestedFollowUps) { item in
-                                        CompletableRowView(
-                                            title: item.title,
-                                            chatName: item.chat_name,
-                                            date: item.date,
+                                    ForEach(lowPriorityTasks) { task in
+                                        TaskRowView(
+                                            task: task,
                                             accentColor: .blue,
-                                            onComplete: { await viewModel.completeFollowUp(id: item.id) },
-                                            onTap: item.message_id.map { msgId in
+                                            onComplete: { await viewModel.completeTask(id: task.id) },
+                                            onTap: task.message_id.map { msgId in
                                                 { Task { await viewModel.openThread(for: msgId) } }
                                             }
                                         )
@@ -98,17 +104,15 @@ struct ActionsPanelView: View {
                             }
 
                             // All caught up
-                            if viewModel.actionItems.isEmpty && viewModel.suggestedFollowUps.isEmpty && !viewModel.keyEvents.isEmpty {
+                            if viewModel.tasks.isEmpty && !viewModel.keyEvents.isEmpty {
                                 Text("All caught up!")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .padding(.vertical, 8)
                             }
 
-                            // Completed toggle
-                            let completedCount = viewModel.completedFollowUps.count + viewModel.completedActionItems.count
-                            let removedCount = viewModel.removedEvents.count
-                            let archivedTotal = completedCount + removedCount
+                            // Completed & Removed toggle
+                            let archivedTotal = viewModel.completedTasks.count + viewModel.removedEvents.count
                             if archivedTotal > 0 || viewModel.showCompletedActions {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -134,16 +138,13 @@ struct ActionsPanelView: View {
                             }
 
                             if viewModel.showCompletedActions {
-                                if completedCount > 0 {
-                                    ForEach(viewModel.completedActionItems) { item in
-                                        CompletedRowView(title: item.title, chatName: item.chat_name)
-                                    }
-                                    ForEach(viewModel.completedFollowUps) { item in
-                                        CompletedRowView(title: item.title, chatName: item.chat_name)
+                                if !viewModel.completedTasks.isEmpty {
+                                    ForEach(viewModel.completedTasks) { task in
+                                        CompletedRowView(title: task.title, chatName: task.chat_name)
                                     }
                                 }
 
-                                if removedCount > 0 {
+                                if !viewModel.removedEvents.isEmpty {
                                     HStack(spacing: 4) {
                                         Image(systemName: "trash")
                                             .font(.system(size: 9))
@@ -227,29 +228,8 @@ struct CollapsibleSection<Content: View>: View {
     }
 }
 
-struct SectionHeader: View {
-    let title: String
-    let icon: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundStyle(color)
-            Text(title)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.top, 4)
-    }
-}
-
-struct CompletableRowView: View {
-    let title: String
-    let chatName: String?
-    let date: Date?
+struct TaskRowView: View {
+    let task: TaskItem
     let accentColor: Color
     let onComplete: () async -> Void
     let onTap: (() -> Void)?
@@ -258,20 +238,20 @@ struct CompletableRowView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(task.title)
                     .font(.caption)
                     .lineLimit(2)
                     .strikethrough(markedDone)
                     .opacity(markedDone ? 0.5 : 1)
 
                 HStack(spacing: 8) {
-                    if let chatName {
+                    if let chatName = task.chat_name {
                         Label(chatName, systemImage: "bubble.left")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
-                    if let date {
+                    if let date = task.date {
                         Label(dueDateText(date), systemImage: "calendar")
                             .font(.caption2)
                             .foregroundStyle(isPastDue(date) ? .red : .secondary)
@@ -332,6 +312,7 @@ struct EventRowView: View {
     let viewModel: SearchViewModel
     @State private var isDeleted = false
     @State private var calendarMessage: String?
+    @State private var showCalendarPopover = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -352,12 +333,18 @@ struct EventRowView: View {
                             .font(.caption2)
                             .foregroundStyle(.purple)
                     }
+                    if let location = event.location {
+                        Label(location, systemImage: "mappin")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
 
                 if let msg = calendarMessage {
                     Text(msg)
                         .font(.caption2)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(msg.contains("Failed") || msg.contains("denied") ? .red : .green)
                 }
             }
 
@@ -365,7 +352,7 @@ struct EventRowView: View {
 
             if event.date != nil {
                 Button {
-                    addToCalendar()
+                    showCalendarPopover = true
                 } label: {
                     Image(systemName: "calendar.badge.plus")
                         .font(.system(size: 14))
@@ -375,6 +362,19 @@ struct EventRowView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Add to Calendar")
+                .popover(isPresented: $showCalendarPopover, arrowEdge: .trailing) {
+                    CalendarPopoverView(
+                        event: event,
+                        onAddApple: {
+                            showCalendarPopover = false
+                            addToAppleCalendar()
+                        },
+                        onAddGoogle: {
+                            showCalendarPopover = false
+                            openGoogleCalendar()
+                        }
+                    )
+                }
             }
 
             Button {
@@ -408,7 +408,7 @@ struct EventRowView: View {
         }
     }
 
-    private func addToCalendar() {
+    private func addToAppleCalendar() {
         guard let date = event.date else { return }
         let store = EKEventStore()
 
@@ -417,6 +417,7 @@ struct EventRowView: View {
             calEvent.title = event.title
             calEvent.startDate = date
             calEvent.endDate = date.addingTimeInterval(3600)
+            calEvent.location = event.location
             calEvent.calendar = store.defaultCalendarForNewEvents
             do {
                 try store.save(calEvent, span: .thisEvent)
@@ -452,6 +453,29 @@ struct EventRowView: View {
         }
     }
 
+    private func openGoogleCalendar() {
+        guard let date = event.date else { return }
+        let endDate = date.addingTimeInterval(3600)
+
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd'T'HHmmss"
+        fmt.timeZone = .current
+
+        var components = URLComponents(string: "https://calendar.google.com/calendar/render")!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "TEMPLATE"),
+            URLQueryItem(name: "text", value: event.title),
+            URLQueryItem(name: "dates", value: "\(fmt.string(from: date))/\(fmt.string(from: endDate))"),
+            URLQueryItem(name: "ctz", value: TimeZone.current.identifier),
+        ]
+        if let location = event.location {
+            components.queryItems?.append(URLQueryItem(name: "location", value: location))
+        }
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func eventDateText(_ date: Date) -> String {
         let cal = Calendar.current
         if cal.isDateInToday(date) {
@@ -461,6 +485,66 @@ struct EventRowView: View {
         } else {
             return date.dayFormatted
         }
+    }
+}
+
+struct CalendarPopoverView: View {
+    let event: KeyEvent
+    let onAddApple: () -> Void
+    let onAddGoogle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Preview
+            Text(event.title)
+                .font(.headline)
+                .lineLimit(3)
+
+            if let date = event.date {
+                Label(date.chatDateFormatted, systemImage: "clock")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let location = event.location {
+                Label(location, systemImage: "mappin")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let chatName = event.chat_name {
+                Label(chatName, systemImage: "bubble.left")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Divider()
+
+            // Actions
+            Button(action: onAddApple) {
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar")
+                        .foregroundStyle(.red)
+                    Text("Add to Apple Calendar")
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onAddGoogle) {
+                HStack(spacing: 6) {
+                    Image(systemName: "globe")
+                        .foregroundStyle(.blue)
+                    Text("Add to Google Calendar")
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .frame(width: 260)
     }
 }
 
