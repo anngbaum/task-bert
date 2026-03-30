@@ -119,7 +119,7 @@ hdiutil create \
   -srcfolder "$DMG_TEMP" \
   -ov \
   -format UDRW \
-  -size 300m \
+  -size 800m \
   "$DMG_RW"
 
 rm -rf "$DMG_TEMP"
