@@ -108,7 +108,7 @@ final class SearchViewModel: ObservableObject {
 
     init() {
         // Apply default preset dates
-        filters.applyPreset(.pastMonth)
+        filters.applyPreset(.past90Days)
 
         // Listen for reminders completed externally (e.g. in Reminders.app)
         RemindersSyncManager.shared.currentTasksProvider = { [weak self] in

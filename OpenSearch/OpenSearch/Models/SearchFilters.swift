@@ -1,7 +1,7 @@
 import Foundation
 
 enum TimePreset: String, CaseIterable, Identifiable, Equatable {
-    case pastMonth = "This Past Month"
+    case past90Days = "Last 90 Days"
     case thisWeek = "This Week"
     case lastWeek = "Last Week"
     case yesterday = "Yesterday"
@@ -14,9 +14,9 @@ enum TimePreset: String, CaseIterable, Identifiable, Equatable {
         let today = cal.startOfDay(for: now)
 
         switch self {
-        case .pastMonth:
-            let monthAgo = cal.date(byAdding: .month, value: -1, to: today)!
-            return (monthAgo, now)
+        case .past90Days:
+            let ninetyDaysAgo = cal.date(byAdding: .day, value: -90, to: today)!
+            return (ninetyDaysAgo, now)
         case .thisWeek:
             let weekStart = cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today))!
             return (weekStart, now)
@@ -38,7 +38,7 @@ struct SearchFilters: Equatable {
     var sentByContacts: [Contact] = []
     var sentByMe: Bool = false
     var groupChat: GroupChat? = nil
-    var timePreset: TimePreset? = .pastMonth
+    var timePreset: TimePreset? = .past90Days
     var afterDate: Date? = nil
     var beforeDate: Date? = nil
 
@@ -86,8 +86,8 @@ struct SearchFilters: Equatable {
         sentByContacts = []
         sentByMe = false
         groupChat = nil
-        timePreset = .pastMonth
-        afterDate = TimePreset.pastMonth.dateRange.after
-        beforeDate = TimePreset.pastMonth.dateRange.before
+        timePreset = .past90Days
+        afterDate = TimePreset.past90Days.dateRange.after
+        beforeDate = TimePreset.past90Days.dateRange.before
     }
 }

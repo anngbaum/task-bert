@@ -14,23 +14,22 @@ import OpenAI from 'openai';
 const TOOLS = [
   {
     name: 'search_messages',
-    description: `Search through iMessage history. Returns matching messages with sender, date, chat name, and message ID.
+    description: `Search through iMessage history. Returns matching messages with sender, date, chat name, and message ID. Each result includes 2 messages before and after for conversational context.
 
 IMPORTANT TIPS:
-- Start with a simple query without filters to see if results exist, then narrow down.
-- The "with_contact" filter searches ALL messages in conversations with that person (both sent and received). This is the best way to find messages involving a specific person.
-- The "from" filter only matches messages sent BY that specific person (not messages you sent to them). Prefer "with_contact" unless you specifically need only messages they sent.
-- If a search returns 0 results, try: (1) broader/different keywords, (2) "text" mode for exact words or "semantic" mode for meaning, (3) removing filters and searching more broadly.
-- Use resolve_contact first if you're unsure of the exact contact name.`,
+- When looking for info about/from a person, ALWAYS use "with_contact" to search within their conversation. This finds ALL messages (both sent and received) in chats with that person.
+- Start with short queries (1-3 keywords). Long queries often return nothing.
+- If 0 results: try (1) different/broader keywords, (2) "text" mode for exact words, (3) "semantic" mode for meaning-based matching, (4) remove filters and search broadly.
+- Use resolve_contact first to find the exact name before using with_contact.
+- Each result shows surrounding messages for context — read them carefully, the answer is often in a nearby message rather than the matched one.`,
     parameters: {
       type: 'object' as const,
       properties: {
         query: { type: 'string', description: 'The search query — topic keywords to search for. Keep it short and focused (1-3 words work best).' },
         mode: { type: 'string', enum: ['text', 'semantic', 'hybrid'], description: 'Search mode. "text" for exact keyword matching, "semantic" for meaning-based search, "hybrid" for best of both. Default: hybrid. Try "text" if hybrid returns nothing.' },
-        with_contact: { type: 'string', description: 'Filter to messages in conversations WITH this person (both sent and received). This is the recommended way to filter by person.' },
-        from: { type: 'string', description: 'Filter to messages sent BY this specific person only. Use "with_contact" instead unless you only want messages they sent.' },
-        after: { type: 'string', description: 'ISO date string — only messages after this date' },
-        before: { type: 'string', description: 'ISO date string — only messages before this date' },
+        with_contact: { type: 'string', description: 'Filter to messages in conversations WITH this person (both sent and received). This is the primary way to search a specific person\'s conversation.' },
+        after: { type: 'string', description: 'ISO date string — only messages after this date. Only use if the user specifies a time range.' },
+        before: { type: 'string', description: 'ISO date string — only messages before this date. Only use if the user specifies a time range.' },
         from_me: { type: 'boolean', description: 'If true, only show messages I sent' },
         group_chat: { type: 'string', description: 'Filter to a specific group chat by name' },
         limit: { type: 'number', description: 'Max results to return (default 10, max 30)' },
@@ -40,20 +39,28 @@ IMPORTANT TIPS:
   },
   {
     name: 'get_context',
-    description: 'Get surrounding messages for a specific message ID. Use this to see what was said before and after a particular message to understand the full conversation context. Always use this when you find a relevant message — the surrounding context often contains the actual answer.',
+    description: `Get a wider window of surrounding messages for a specific message ID. Returns more context than what's included in search results.
+
+USE THIS WHEN:
+- A search result looks relevant but the inline context (2 before, 5 after) isn't enough to find the answer
+- You see a question in the context but the answer was sent later and isn't visible yet
+- You want to read more of the conversation to understand the full picture
+- The information you need might be a few messages away from the match
+
+You can call this multiple times with increasing "after" values (e.g. 10, then 20) to keep reading further into the conversation.`,
     parameters: {
       type: 'object' as const,
       properties: {
-        message_id: { type: 'number', description: 'The message ID to get context for' },
-        before: { type: 'number', description: 'Number of messages before (default 5)' },
-        after: { type: 'number', description: 'Number of messages after (default 10)' },
+        message_id: { type: 'number', description: 'The message ID to get context around' },
+        before: { type: 'number', description: 'Number of messages before (default 5, max 50)' },
+        after: { type: 'number', description: 'Number of messages after (default 10, max 50). Increase this if you think the answer came later in the conversation.' },
       },
       required: ['message_id'],
     },
   },
   {
     name: 'resolve_contact',
-    description: 'Look up a contact by name to find their exact name as stored in the database and their message count. ALWAYS call this first before using "with_contact" or "from" filters in search_messages — the name must match exactly what\'s in the database.',
+    description: 'Look up a contact by name to find their exact name as stored in the database and their message count. ALWAYS call this first before using "with_contact" in search_messages — the name must match exactly what\'s in the database.',
     parameters: {
       type: 'object' as const,
       properties: {
@@ -76,7 +83,7 @@ IMPORTANT TIPS:
 
 // --- Tool execution ---
 
-async function executeSearch(args: Record<string, unknown>): Promise<{ results: SearchResult[]; total: number }> {
+async function executeSearch(args: Record<string, unknown>): Promise<{ results: SearchResult[]; resultsWithContext: { result: SearchResult; context: ContextMessage[] }[]; total: number }> {
   const query = args.query as string;
   const mode = (args.mode as string) || 'hybrid';
   const limit = Math.min((args.limit as number) || 10, 30);
@@ -88,7 +95,7 @@ async function executeSearch(args: Record<string, unknown>): Promise<{ results: 
     context: 0,
   };
 
-  // with_contact: filter to conversations WITH this person (recommended)
+  // with_contact: filter to conversations WITH this person (both sent and received)
   if (args.with_contact) {
     const contactName = args.with_contact as string;
     const matches = await searchContacts(contactName, 5);
@@ -97,18 +104,6 @@ async function executeSearch(args: Record<string, unknown>): Promise<{ results: 
       options.withContacts = [matches[0].displayName ?? matches[0].identifier];
     } else {
       options.withContacts = [contactName];
-    }
-  }
-
-  // from: filter to messages sent BY this person only
-  if (args.from) {
-    const fromName = args.from as string;
-    const matches = await searchContacts(fromName, 5);
-    console.log(`[agent] resolve from "${fromName}": ${matches.length} matches → ${matches.map(m => `${m.displayName ?? m.identifier} (score: ${m.score}, handle: ${m.handleId})`).join(', ')}`);
-    if (matches.length > 0) {
-      options.handleIds = matches.map(m => m.handleId);
-    } else {
-      options.from = fromName;
     }
   }
 
@@ -136,8 +131,17 @@ async function executeSearch(args: Record<string, unknown>): Promise<{ results: 
       break;
   }
 
-  console.log(`[agent] search returned ${results.length} results`);
-  return { results, total: results.length };
+  // Fetch surrounding context (2 before, 5 after) for each result so the LLM
+  // can understand messages in their conversational context.
+  // More "after" messages because answers often come several messages after the question.
+  const resultsWithContext: { result: SearchResult; context: ContextMessage[] }[] = [];
+  for (const r of results) {
+    const ctx = await getContextMessages(r.id, 2, 5);
+    resultsWithContext.push({ result: r, context: ctx });
+  }
+
+  console.log(`[agent] search returned ${results.length} results (with context)`);
+  return { results, resultsWithContext, total: results.length };
 }
 
 async function executeGetContext(args: Record<string, unknown>): Promise<ContextMessage[]> {
@@ -202,13 +206,22 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 
 // --- Format results for the LLM ---
 
-function formatSearchResultsForLLM(results: SearchResult[]): string {
-  if (results.length === 0) return 'No results found.';
-  return results.map((r, i) => {
+function formatSearchResultsForLLM(resultsWithContext: { result: SearchResult; context: ContextMessage[] }[]): string {
+  if (resultsWithContext.length === 0) return 'No results found.';
+  return resultsWithContext.map(({ result: r, context }, i) => {
     const sender = r.is_from_me ? 'Me' : (r.sender ?? 'Unknown');
     const date = r.date ? new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Unknown date';
-    return `[${i + 1}] MSG-${r.id} | ${sender} in "${r.chat_name ?? 'Unknown'}" (${date}):\n  "${r.text}"`;
-  }).join('\n\n');
+
+    // Format context messages around the match
+    const contextLines = context.map(m => {
+      const ctxSender = m.is_from_me ? 'Me' : (m.sender ?? 'Unknown');
+      const isMatch = m.id === r.id;
+      const prefix = isMatch ? '>>>' : '   ';
+      return `${prefix} MSG-${m.id} | ${ctxSender}: ${m.text ?? '[no text]'}`;
+    }).join('\n');
+
+    return `[${i + 1}] Match: MSG-${r.id} | ${sender} in "${r.chat_name ?? 'Unknown'}" (${date})\nConversation thread:\n${contextLines}`;
+  }).join('\n\n---\n\n');
 }
 
 function formatContextForLLM(messages: ContextMessage[]): string {
@@ -253,7 +266,6 @@ function describeToolCall(name: string, args: Record<string, unknown>): string {
       const parts: string[] = [];
       parts.push(`"${args.query}"`);
       if (args.with_contact) parts.push(`in conversations with ${args.with_contact}`);
-      if (args.from) parts.push(`from ${args.from}`);
       if (args.from_me) parts.push('sent by me');
       if (args.group_chat) parts.push(`in "${args.group_chat}"`);
       if (args.after || args.before) {
@@ -315,11 +327,12 @@ You have access to tools that let you search messages, look up contacts, get con
 
 STRATEGY:
 1. If the user mentions a person's name, ALWAYS call resolve_contact FIRST to find their exact name in the database. Names must match exactly for filters to work.
-2. When searching for messages involving a person, use the "with_contact" parameter (NOT "from"). "with_contact" finds all messages in conversations with that person. "from" only finds messages they sent, missing messages you sent to them.
+2. When searching for messages involving a person, use the "with_contact" parameter. It finds ALL messages in conversations with that person — both what they said and what you said to them.
 3. Start with short, focused search queries (1-3 keywords). Long queries often return nothing.
 4. If a search returns 0 results, try: different keywords, "text" mode for exact matches, or remove filters and search more broadly.
-5. Use get_context to read the full conversation around interesting messages — the surrounding messages often contain the real answer.
+5. Search results include a few surrounding messages for context. If you see something promising but the answer isn't visible yet, call get_context on that message ID with a larger "after" value (e.g. 15 or 20) to read further into the conversation.
 6. You can make multiple searches with different queries to be thorough.
+7. Do NOT use the "after" or "before" date filters unless the user explicitly mentions a time range (e.g. "last week", "in January", "recently"). By default, search across all time.
 
 RESPONSE FORMAT:
 - Give a clear, concise answer to the user's question
@@ -445,8 +458,8 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
         // Format results nicely for the LLM
         let formattedResult: string;
         if (toolUse.name === 'search_messages') {
-          const searchResult = result as { results: SearchResult[]; total: number };
-          formattedResult = `Found ${searchResult.total} results:\n\n${formatSearchResultsForLLM(searchResult.results)}`;
+          const searchResult = result as { results: SearchResult[]; resultsWithContext: { result: SearchResult; context: ContextMessage[] }[]; total: number };
+          formattedResult = `Found ${searchResult.total} results:\n\n${formatSearchResultsForLLM(searchResult.resultsWithContext)}`;
 
           // Collect message links from search results
           for (const r of searchResult.results) {
@@ -601,8 +614,8 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
 
         let formattedResult: string;
         if (fn.name === 'search_messages') {
-          const searchResult = result as { results: SearchResult[]; total: number };
-          formattedResult = `Found ${searchResult.total} results:\n\n${formatSearchResultsForLLM(searchResult.results)}`;
+          const searchResult = result as { results: SearchResult[]; resultsWithContext: { result: SearchResult; context: ContextMessage[] }[]; total: number };
+          formattedResult = `Found ${searchResult.total} results:\n\n${formatSearchResultsForLLM(searchResult.resultsWithContext)}`;
 
           for (const r of searchResult.results) {
             if (!collectedLinks.find(l => l.message_id === r.id)) {
