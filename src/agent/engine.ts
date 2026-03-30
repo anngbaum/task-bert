@@ -79,6 +79,19 @@ You can call this multiple times with increasing "after" values (e.g. 10, then 2
       },
     },
   },
+  {
+    name: 'request_more_messages',
+    description: `Signal that the imported messages don't go far back enough to answer the user's question. Call this when your searches return no results and you believe the answer exists in older messages that haven't been imported yet.
+
+ONLY call this as a LAST RESORT after trying multiple search strategies. Do NOT call this if you found relevant results but they didn't fully answer the question — that's different from missing data.`,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        reason: { type: 'string', description: 'Brief explanation of why more messages are needed' },
+      },
+      required: ['reason'],
+    },
+  },
 ];
 
 // --- Tool execution ---
@@ -189,6 +202,16 @@ async function executeGetChatSummaries(args: Record<string, unknown>): Promise<u
   return result.rows;
 }
 
+async function executeRequestMoreMessages(args: Record<string, unknown>): Promise<{ earliest_message: string | null; reason: string }> {
+  const db = await getPglite();
+  const result = await db.query('SELECT MIN(date) as earliest FROM message WHERE date IS NOT NULL');
+  const earliest = (result.rows[0] as any)?.earliest ?? null;
+  return {
+    earliest_message: earliest ? new Date(earliest).toISOString() : null,
+    reason: (args.reason as string) || 'More historical messages needed',
+  };
+}
+
 async function executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
     case 'search_messages':
@@ -199,6 +222,8 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       return executeResolveContact(args);
     case 'get_chat_summaries':
       return executeGetChatSummaries(args);
+    case 'request_more_messages':
+      return executeRequestMoreMessages(args);
     default:
       return { error: `Unknown tool: ${name}` };
   }
@@ -254,6 +279,11 @@ export interface AgentResponse {
   answer: string;
   message_links: MessageLink[];
   tool_calls_count: number;
+  /** Set when the agent called request_more_messages — signals the UI to offer importing older messages */
+  more_messages_needed?: {
+    earliest_message: string | null;
+    reason: string;
+  };
 }
 
 export type ProgressCallback = (event: AgentProgressEvent) => void;
@@ -284,6 +314,8 @@ function describeToolCall(name: string, args: Record<string, unknown>): string {
       return `Looking up contact "${args.name}"`;
     case 'get_chat_summaries':
       return 'Fetching recent conversation summaries';
+    case 'request_more_messages':
+      return `Requesting older messages: ${args.reason}`;
     default:
       return `Calling ${name}`;
   }
@@ -309,6 +341,10 @@ function describeToolResult(name: string, result: unknown): string {
       const rows = result as unknown[];
       return `Got ${rows.length} conversation summaries`;
     }
+    case 'request_more_messages': {
+      const info = result as { earliest_message: string | null };
+      return `Requesting more messages (earliest: ${info.earliest_message ?? 'unknown'})`;
+    }
     default:
       return 'Done';
   }
@@ -331,6 +367,7 @@ STRATEGY:
 3. Start with short, focused search queries (1-3 keywords). Long queries often return nothing.
 4. If a search returns 0 results, try: different keywords, "text" mode for exact matches, or remove filters and search more broadly.
 5. Search results include a few surrounding messages for context. If you see something promising but the answer isn't visible yet, call get_context on that message ID with a larger "after" value (e.g. 15 or 20) to read further into the conversation.
+   NOTE: Only a limited time window of messages has been imported. If resolve_contact finds a person but they have 0 messages, or if all your searches return 0 results, their messages likely exist but are outside the imported window. In this case, call request_more_messages instead of telling the user no messages exist.
 6. You can make multiple searches with different queries to be thorough.
 7. Do NOT use the "after" or "before" date filters unless the user explicitly mentions a time range (e.g. "last week", "in January", "recently"). By default, search across all time.
 
@@ -369,6 +406,7 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
 
   const collectedLinks: MessageLink[] = [];
   let toolCallsCount = 0;
+  let moreMessagesNeeded: AgentResponse['more_messages_needed'];
   const MAX_ITERATIONS = 10;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -436,7 +474,7 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
         }
       }
 
-      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount };
+      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
     }
 
     // Execute tool calls
@@ -488,6 +526,10 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
               });
             }
           }
+        } else if (toolUse.name === 'request_more_messages') {
+          const moreResult = result as { earliest_message: string | null; reason: string };
+          moreMessagesNeeded = moreResult;
+          formattedResult = `The earliest imported message is from ${moreResult.earliest_message ?? 'unknown date'}. The user will be prompted to import older messages. Please let the user know you couldn't find the answer in the currently imported messages and suggest they import more.`;
         } else {
           formattedResult = JSON.stringify(result, null, 2);
         }
@@ -504,7 +546,7 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount };
+  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
 }
 
 // --- OpenAI agent loop ---
@@ -532,6 +574,7 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
 
   const collectedLinks: MessageLink[] = [];
   let toolCallsCount = 0;
+  let moreMessagesNeeded: AgentResponse['more_messages_needed'];
   const MAX_ITERATIONS = 10;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -592,7 +635,7 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
         }
       }
 
-      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount };
+      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
     }
 
     // Execute tool calls
@@ -643,6 +686,10 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
               });
             }
           }
+        } else if (fn.name === 'request_more_messages') {
+          const moreResult = result as { earliest_message: string | null; reason: string };
+          moreMessagesNeeded = moreResult;
+          formattedResult = `The earliest imported message is from ${moreResult.earliest_message ?? 'unknown date'}. The user will be prompted to import older messages. Please let the user know you couldn't find the answer in the currently imported messages and suggest they import more.`;
         } else {
           formattedResult = JSON.stringify(result, null, 2);
         }
@@ -657,7 +704,7 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
     }
   }
 
-  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount };
+  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
 }
 
 // --- Main entry point ---

@@ -13,6 +13,7 @@
     "serve": "lsof -ti :11488 | xargs kill 2>/dev/null; tsx src/server.ts",
     "serve:reset": "lsof -ti :11488 | xargs kill 2>/dev/null; tsx src/server.ts --hard-reset",
     "resync": "tsx src/index.ts resync",
+    "mcp": "tsx src/mcp-server.ts",
     "bundle": "bash scripts/bundle-server.sh",
     "package": "bash scripts/package-app.sh"
   },
@@ -20,6 +21,7 @@
     "@anthropic-ai/sdk": "^0.78.0",
     "@electric-sql/pglite": "^0.2.17",
     "@huggingface/transformers": "^3.8.1",
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "better-sqlite3": "^11.7.0",
     "bplist-parser": "^0.3.2",
     "commander": "^13.1.0",

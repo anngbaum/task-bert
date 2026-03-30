@@ -2,7 +2,6 @@ import { Command } from 'commander';
 import { copyDb } from './commands/copy-db.js';
 import { embed } from './commands/embed.js';
 import { search } from './commands/search.js';
-import { ask } from './commands/ask.js';
 import { status } from './commands/status.js';
 import { unifiedSync } from './commands/unified-sync.js';
 import { closePglite } from './db/pglite-client.js';
@@ -85,22 +84,6 @@ program
 
     try {
       await search(query, searchOptions);
-    } finally {
-      await closePglite();
-    }
-  });
-
-program
-  .command('ask <query>')
-  .description('Search messages using natural language')
-  .option('--limit <n>', 'Max results', '20')
-  .option('--context <n>', 'Surrounding messages to show', '2')
-  .action(async (query: string, opts) => {
-    try {
-      await ask(query, {
-        limit: parseInt(opts.limit, 10),
-        context: parseInt(opts.context, 10),
-      });
     } finally {
       await closePglite();
     }

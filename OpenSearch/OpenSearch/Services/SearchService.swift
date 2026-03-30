@@ -159,6 +159,26 @@ actor SearchService {
         return try decoder.decode(SyncResponse.self, from: data)
     }
 
+    struct ImportOlderStarted: Decodable {
+        let started: Bool
+        let since: String
+    }
+
+    /// Kicks off import in the background. Returns immediately — poll /health for progress.
+    func startImportOlderMessages(since: Date) async throws {
+        let iso = ISO8601DateFormatter().string(from: since)
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/import-older"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "since", value: iso)]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+    }
+
     func fetchHealth() async throws -> HealthResponse {
         let url = baseURL.appendingPathComponent("health")
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -326,13 +346,19 @@ actor SearchService {
         var id: Int { message_id }
     }
 
+    struct MoreMessagesNeeded: Decodable {
+        let earliest_message: String?
+        let reason: String
+    }
+
     struct AgentResponse: Decodable {
         let answer: String
         let message_links: [AgentMessageLink]
         let tool_calls_count: Int
+        let more_messages_needed: MoreMessagesNeeded?
 
         enum CodingKeys: String, CodingKey {
-            case answer, message_links, tool_calls_count
+            case answer, message_links, tool_calls_count, more_messages_needed
         }
     }
 

@@ -8,9 +8,9 @@ import { searchFTS } from './search/fts.js';
 import { searchVector } from './search/vector.js';
 import { searchHybrid } from './search/hybrid.js';
 import { getContextMessages } from './display/formatter.js';
-import { parseNaturalQuery, disposeQueryParser, AVAILABLE_MODELS } from './llm/query-parser.js';
+import { disposeQueryParser, AVAILABLE_MODELS } from './llm/query-parser.js';
 import { searchContacts, resolveContactHandleIds } from './contacts/search.js';
-import { unifiedSync, syncSingleConversation } from './commands/unified-sync.js';
+import { unifiedSync, syncSingleConversation, importOlderMessages } from './commands/unified-sync.js';
 import { updateMetadata, refreshChatMetadata } from './commands/update-metadata.js';
 import { getThread, NotFoundError } from './thread/thread.js';
 import { runAgent } from './agent/engine.js';
@@ -242,89 +242,6 @@ async function handleGroups(
     ORDER BY name
   `);
   jsonResponse(res, { groups: result.rows.map((r: any) => ({ name: r.name, chatIdentifier: r.chat_identifier })) });
-}
-
-async function handleAsk(
-  params: URLSearchParams,
-  res: http.ServerResponse
-): Promise<void> {
-  const query = params.get('q');
-  if (!query) {
-    errorResponse(res, 'Missing required parameter: q');
-    return;
-  }
-
-  const parsed = await parseNaturalQuery(query, getLLMConfig());
-
-  // Manual filters from the client take precedence over LLM-parsed ones
-  const manualFrom = params.get('from') || undefined;
-  const manualGroupChatName = params.get('groupChatName') || undefined;
-  const manualAfter = params.get('after') || undefined;
-  const manualBefore = params.get('before') || undefined;
-  const manualFromMe = params.get('fromMe') === 'true';
-  const manualToMe = params.get('toMe') === 'true';
-
-  const effectiveFrom = manualFrom ?? parsed.from;
-  const effectiveGroupChatName = manualGroupChatName ?? parsed.groupChatName;
-  const effectiveAfter = manualAfter ?? parsed.after;
-  const effectiveBefore = manualBefore ?? parsed.before;
-  const effectiveFromMe = manualFromMe || (parsed.fromMe ?? false);
-  const effectiveToMe = manualToMe || (parsed.toMe ?? false);
-
-  // Resolve contact name to actual handle IDs
-  let handleIds: number[] | undefined;
-  let resolvedContact: { name: string; handleIds: number[] } | undefined;
-
-  if (effectiveFrom) {
-    const matches = await searchContacts(effectiveFrom, 5);
-    if (matches.length > 0) {
-      const topScore = matches[0].score;
-      const topMatches = matches.filter((m) => m.score === topScore);
-      handleIds = topMatches.map((m) => m.handleId);
-      resolvedContact = {
-        name: topMatches[0].displayName ?? topMatches[0].identifier,
-        handleIds,
-      };
-    }
-  }
-
-  const mode = parsed.mode ?? 'hybrid';
-  const limit = Math.min(parseInt(params.get('limit') || '20', 10) || 20, 100);
-
-  const options: SearchOptions = {
-    mode,
-    limit,
-    offset: 0,
-    context: 0,
-    from: handleIds ? undefined : effectiveFrom,
-    handleIds,
-    groupChatName: effectiveGroupChatName,
-    after: effectiveAfter,
-    before: effectiveBefore,
-    fromMe: effectiveFromMe,
-    toMe: effectiveToMe,
-  };
-
-  let results;
-  switch (mode) {
-    case 'text':
-      results = await searchFTS(parsed.query, options);
-      break;
-    case 'semantic':
-      results = await searchVector(parsed.query, options);
-      break;
-    case 'hybrid':
-      results = await searchHybrid(parsed.query, options);
-      break;
-  }
-
-  jsonResponse(res, {
-    interpreted: parsed,
-    resolvedContact,
-    results,
-    count: results.length,
-    mode,
-  });
 }
 
 async function handleContactSearch(
@@ -668,7 +585,7 @@ const server = http.createServer(async (req, res) => {
 
             const result = await runAgent(parsed.query, llmConfig, onProgress);
             console.log(`[agent] Completed: ${result.tool_calls_count} tool calls, ${result.message_links.length} links`);
-            res.write(JSON.stringify({ stream: 'result', answer: result.answer, message_links: result.message_links, tool_calls_count: result.tool_calls_count }) + '\n');
+            res.write(JSON.stringify({ stream: 'result', answer: result.answer, message_links: result.message_links, tool_calls_count: result.tool_calls_count, more_messages_needed: result.more_messages_needed ?? null }) + '\n');
             res.end();
           } catch (err) {
             console.error('[agent] Error:', err);
@@ -680,6 +597,33 @@ const server = http.createServer(async (req, res) => {
               errorResponse(res, (err as Error).message, 500);
             }
           }
+          break;
+        }
+        case '/api/import-older': {
+          if (syncInProgress) {
+            jsonResponse(res, { error: 'Sync already in progress' }, 409);
+            break;
+          }
+          const sinceStr = params.get('since');
+          if (!sinceStr) {
+            errorResponse(res, 'Missing required parameter: since (ISO date)');
+            break;
+          }
+          const sinceDate = new Date(sinceStr);
+          if (isNaN(sinceDate.getTime())) {
+            errorResponse(res, 'Invalid date format for since parameter');
+            break;
+          }
+          syncInProgress = true;
+          jsonResponse(res, { started: true, since: sinceDate.toISOString() });
+          importOlderMessages(sinceDate)
+            .then((result) => {
+              console.log(`[import-older] Complete: ${result.newMessageCount} new messages.`);
+            })
+            .catch((err) => {
+              console.error('[import-older] Failed:', err);
+            })
+            .finally(() => { syncInProgress = false; });
           break;
         }
         case '/api/sync': {
@@ -737,9 +681,6 @@ const server = http.createServer(async (req, res) => {
         break;
       case '/api/search':
         await handleSearch(params, res);
-        break;
-      case '/api/ask':
-        await handleAsk(params, res);
         break;
       case '/api/contacts':
         await handleContacts(res);
@@ -853,6 +794,18 @@ const server = http.createServer(async (req, res) => {
         const limit = parseInt(params.get('limit') || '200', 10);
         const logs = getRecentLogs(limit);
         jsonResponse(res, { logs });
+        break;
+      }
+      case '/api/data-range': {
+        const db = await getPglite();
+        const earliest = await db.query('SELECT MIN(date) as earliest FROM message WHERE date IS NOT NULL');
+        const latest = await db.query('SELECT MAX(date) as latest FROM message WHERE date IS NOT NULL');
+        const count = await db.query('SELECT count(*) as cnt FROM message');
+        jsonResponse(res, {
+          earliest_message: (earliest.rows[0] as any)?.earliest ?? null,
+          latest_message: (latest.rows[0] as any)?.latest ?? null,
+          total_messages: parseInt((count.rows[0] as any)?.cnt ?? '0', 10),
+        });
         break;
       }
       default:

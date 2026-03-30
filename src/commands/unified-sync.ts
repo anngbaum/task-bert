@@ -38,7 +38,7 @@ const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
 
 export interface UnifiedSyncOptions {
   /**
-   * - 'hardReset': Wipe DB, import 90 days, embed all, metadata for 7-day window
+   * - 'hardReset': Wipe DB, import 120 days, embed all, metadata for 7-day window
    * - 'pullLatest': Import 7 days, embed new, metadata only for chats with new messages
    * - 'resync': Import 7 days, embed new, metadata for all chats in 7-day window
    */
@@ -258,6 +258,40 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
   console.log('=== Hard Reset ===');
   updateSyncProgress('setup', 'Preparing database...', 0);
 
+  // Save existing Reminders-synced tasks before wiping — these need to be restored after metadata generation
+  const savedReminders: { chat_id: number; title: string; reminder_id: string; completed: boolean }[] = [];
+  const savedCompletedTasks: { chat_id: number; title: string }[] = [];
+  const savedRemovedEvents: { chat_id: number; title: string }[] = [];
+  try {
+    const pg = await getPglite();
+    const reminderRows = await pg.query(
+      'SELECT chat_id, title, reminder_id, completed FROM tasks WHERE reminder_id IS NOT NULL'
+    );
+    for (const row of reminderRows.rows as any[]) {
+      savedReminders.push({ chat_id: row.chat_id, title: row.title, reminder_id: row.reminder_id, completed: row.completed });
+    }
+    // Also preserve user-completed tasks and user-removed events so they don't get recreated
+    const completedRows = await pg.query('SELECT chat_id, title FROM tasks WHERE completed = true');
+    for (const row of completedRows.rows as any[]) {
+      savedCompletedTasks.push({ chat_id: row.chat_id, title: row.title });
+    }
+    const removedRows = await pg.query('SELECT chat_id, title FROM key_events WHERE removed = true');
+    for (const row of removedRows.rows as any[]) {
+      savedRemovedEvents.push({ chat_id: row.chat_id, title: row.title });
+    }
+    if (savedReminders.length > 0) {
+      console.log(`[hard-reset] Saved ${savedReminders.length} Reminders-synced task(s) for restoration.`);
+    }
+    if (savedCompletedTasks.length > 0) {
+      console.log(`[hard-reset] Saved ${savedCompletedTasks.length} completed task(s) to prevent recreation.`);
+    }
+    if (savedRemovedEvents.length > 0) {
+      console.log(`[hard-reset] Saved ${savedRemovedEvents.length} removed event(s) to prevent recreation.`);
+    }
+  } catch {
+    // DB may not exist yet on first run — that's fine
+  }
+
   // Wipe pgdata — close PGLite first, wait for it to release file locks
   console.log('Closing PGLite...');
   await closePglite();
@@ -288,10 +322,10 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
   const msgCount = await pg.query('SELECT count(*) as cnt FROM message');
   console.log(`[hard-reset] Fresh DB message count: ${(msgCount.rows[0] as any).cnt}`);
 
-  // Ingest last 90 days of messages
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  // Ingest last 120 days of messages
+  const cutoffDate = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
   updateSyncProgress('etl', 'Importing messages...', 5);
-  const etlResult = await runETL(ninetyDaysAgo, 5);
+  const etlResult = await runETL(cutoffDate, 5);
 
   // Embed all
   if (!skipEmbed) {
@@ -307,6 +341,50 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
     console.log(`\nUpdating chat metadata (last ${metadataDays}d)...`);
     updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
     await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 1 });
+  }
+
+  // Restore Reminders-synced tasks, completed tasks, and removed events from before the wipe
+  if (savedReminders.length > 0 || savedCompletedTasks.length > 0 || savedRemovedEvents.length > 0) {
+    console.log('\nRestoring pre-reset state...');
+
+    // Restore reminder_id mappings by matching chat_id + title
+    let restoredCount = 0;
+    for (const saved of savedReminders) {
+      const result = await pg.query(
+        'UPDATE tasks SET reminder_id = $1 WHERE chat_id = $2 AND title = $3 AND reminder_id IS NULL',
+        [saved.reminder_id, saved.chat_id, saved.title]
+      );
+      if ((result.affectedRows ?? 0) > 0) restoredCount++;
+    }
+    if (restoredCount > 0) {
+      console.log(`[hard-reset] Restored ${restoredCount}/${savedReminders.length} Reminders mapping(s).`);
+    }
+
+    // Re-mark tasks that were previously completed by the user
+    let recompletedCount = 0;
+    for (const saved of savedCompletedTasks) {
+      const result = await pg.query(
+        'UPDATE tasks SET completed = true WHERE chat_id = $1 AND title = $2 AND completed = false',
+        [saved.chat_id, saved.title]
+      );
+      if ((result.affectedRows ?? 0) > 0) recompletedCount++;
+    }
+    if (recompletedCount > 0) {
+      console.log(`[hard-reset] Re-completed ${recompletedCount} task(s) that user had previously dismissed.`);
+    }
+
+    // Re-mark events that were previously removed by the user
+    let reremovedCount = 0;
+    for (const saved of savedRemovedEvents) {
+      const result = await pg.query(
+        'UPDATE key_events SET removed = true WHERE chat_id = $1 AND title = $2 AND (removed = false OR removed IS NULL)',
+        [saved.chat_id, saved.title]
+      );
+      if ((result.affectedRows ?? 0) > 0) reremovedCount++;
+    }
+    if (reremovedCount > 0) {
+      console.log(`[hard-reset] Re-removed ${reremovedCount} event(s) that user had previously dismissed.`);
+    }
   }
 
   const now = new Date();
@@ -373,4 +451,29 @@ export async function syncSingleConversation(chatId: number, llmConfig: LLMConfi
 
   console.log(`[sync] Chat ${chatId}: ${newCount} new message(s), metadata refreshed.`);
   return { newMessages: newCount };
+}
+
+/**
+ * Import older messages by extending the date range back further.
+ * Embeds the new messages but does NOT run metadata/actions.
+ */
+export async function importOlderMessages(since: Date): Promise<{ messagesAdded: number; newMessageCount: number }> {
+  console.log(`=== Import Older Messages (since ${since.toISOString().split('T')[0]}) ===`);
+  updateSyncProgress('setup', 'Copying message database...', 0);
+  await copyDb({ force: true });
+
+  const pg = await getPglite();
+  await initSchema();
+
+  updateSyncProgress('etl', 'Importing older messages...', 5);
+  const etlResult = await runETL(since, 5);
+
+  // Embed new messages only
+  console.log('Embedding new messages...');
+  updateSyncProgress('embedding', 'Generating embeddings...', 50);
+  await embed({ batchSize: 200 });
+
+  updateSyncProgress('done', 'Complete!', 100);
+  console.log(`Import complete: ${etlResult.newMessageCount} new message(s).`);
+  return { messagesAdded: etlResult.messagesAdded, newMessageCount: etlResult.newMessageCount };
 }

@@ -107,12 +107,12 @@ struct EventCardView: View {
                             .font(.caption2)
                             .foregroundStyle(.purple)
                     }
-                    if let location = event.location {
-                        Label(location, systemImage: "mappin")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                }
+                if let location = event.location {
+                    Label(location, systemImage: "mappin")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
                 if let msg = calendarMessage {

@@ -47,8 +47,8 @@ export async function sync(): Promise<SyncResult> {
 
   // 3. Read last_synced
   const lastSynced = await getLastSynced(pg);
-  const threeMonthsAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  const afterDate = lastSynced ?? threeMonthsAgo;
+  const cutoffDate = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
+  const afterDate = lastSynced ?? cutoffDate;
   console.log(lastSynced
     ? `Last synced: ${lastSynced.toISOString()}`
     : `No previous sync found — importing messages from last 3 months`

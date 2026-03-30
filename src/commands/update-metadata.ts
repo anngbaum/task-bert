@@ -477,7 +477,7 @@ Only extract key events with FUTURE dates that "Me" (the user) might still want 
 Future-dated events, milestones, or recurring dates mentioned in the conversation.
 Examples: "Maddy's birthday on April 5", "Trip to LA in May", "Baby due in June", "Wedding on July 12"
 
-Only include events whose date is TODAY or later. Skip past events.
+Only include events whose date is TODAY (${today}) or later. Skip past events.
 
 ## 2. TASKS
 Low-priority tasks tied to upcoming key events — things "Me" might want to do before or on that date.
