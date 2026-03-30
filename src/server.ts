@@ -13,6 +13,7 @@ import { searchContacts, resolveContactHandleIds } from './contacts/search.js';
 import { unifiedSync, syncSingleConversation } from './commands/unified-sync.js';
 import { updateMetadata, refreshChatMetadata } from './commands/update-metadata.js';
 import { getThread, NotFoundError } from './thread/thread.js';
+import { runAgent } from './agent/engine.js';
 import type { SearchOptions } from './types.js';
 
 // --- In-memory log buffer for debug panel ---
@@ -550,6 +551,32 @@ const server = http.createServer(async (req, res) => {
           }
           break;
         }
+        case '/api/tasks/create': {
+          const body = await readBody(req);
+          let parsed: { title?: string; date?: string; priority?: string; chat_id?: number; key_event_id?: number };
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            errorResponse(res, 'Invalid JSON body');
+            break;
+          }
+          if (!parsed.title) {
+            errorResponse(res, 'Missing required field: title');
+            break;
+          }
+          try {
+            const db = await getPglite();
+            const priority = parsed.priority === 'high' ? 'high' : 'low';
+            const result = await db.query(
+              `INSERT INTO tasks (chat_id, title, date, priority, key_event_id) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+              [parsed.chat_id ?? 0, parsed.title, parsed.date ?? null, priority, parsed.key_event_id ?? null]
+            );
+            jsonResponse(res, { ok: true, task: result.rows[0] });
+          } catch (err) {
+            errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
         case '/api/actions/complete': {
           const actionIdStr = params.get('id');
           if (!actionIdStr) {
@@ -564,6 +591,27 @@ const server = http.createServer(async (req, res) => {
           try {
             const db = await getPglite();
             await db.query('UPDATE tasks SET completed = true WHERE id = $1', [actionId]);
+            jsonResponse(res, { ok: true });
+          } catch (err) {
+            errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
+        case '/api/tasks/set-reminder': {
+          const taskIdStr = params.get('id');
+          const reminderId = params.get('reminderId');
+          if (!taskIdStr) {
+            errorResponse(res, 'Missing required parameter: id');
+            break;
+          }
+          const taskId = parseInt(taskIdStr, 10);
+          if (isNaN(taskId)) {
+            errorResponse(res, 'id must be a number');
+            break;
+          }
+          try {
+            const db = await getPglite();
+            await db.query('UPDATE tasks SET reminder_id = $1 WHERE id = $2', [reminderId || null, taskId]);
             jsonResponse(res, { ok: true });
           } catch (err) {
             errorResponse(res, (err as Error).message, 500);
@@ -587,6 +635,50 @@ const server = http.createServer(async (req, res) => {
             jsonResponse(res, { ok: true });
           } catch (err) {
             errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
+        case '/api/agent': {
+          const body = await readBody(req);
+          let parsed: { query?: string };
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            errorResponse(res, 'Invalid JSON body');
+            break;
+          }
+          if (!parsed.query) {
+            errorResponse(res, 'Missing required field: query');
+            break;
+          }
+          try {
+            const llmConfig = getLLMConfig();
+            console.log(`[agent] Received query: "${parsed.query}"`);
+
+            // Stream newline-delimited JSON: progress events followed by final result
+            res.writeHead(200, {
+              'Content-Type': 'application/x-ndjson',
+              'Transfer-Encoding': 'chunked',
+              ...corsHeaders(),
+            });
+
+            const onProgress = (event: import('./agent/engine.js').AgentProgressEvent) => {
+              res.write(JSON.stringify({ stream: 'progress', event_type: event.type, description: event.description, tool: event.tool, result_summary: event.result_summary }) + '\n');
+            };
+
+            const result = await runAgent(parsed.query, llmConfig, onProgress);
+            console.log(`[agent] Completed: ${result.tool_calls_count} tool calls, ${result.message_links.length} links`);
+            res.write(JSON.stringify({ stream: 'result', answer: result.answer, message_links: result.message_links, tool_calls_count: result.tool_calls_count }) + '\n');
+            res.end();
+          } catch (err) {
+            console.error('[agent] Error:', err);
+            // If headers already sent, write error as ndjson
+            if (res.headersSent) {
+              res.write(JSON.stringify({ stream: 'error', message: (err as Error).message }) + '\n');
+              res.end();
+            } else {
+              errorResponse(res, (err as Error).message, 500);
+            }
           }
           break;
         }

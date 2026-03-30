@@ -32,6 +32,9 @@
 		A10021 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* SettingsView.swift */; };
 		A10022 /* ServerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* ServerManager.swift */; };
 		A10023 /* DebugLogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* DebugLogsView.swift */; };
+		A10024 /* RemindersSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* RemindersSyncManager.swift */; };
+		A10025 /* AgentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* AgentView.swift */; };
+		A10026 /* EventsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* EventsPanelView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +64,9 @@
 		B10021 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B10022 /* ServerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerManager.swift; sourceTree = "<group>"; };
 		B10023 /* DebugLogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogsView.swift; sourceTree = "<group>"; };
+		B10024 /* RemindersSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersSyncManager.swift; sourceTree = "<group>"; };
+		B10025 /* AgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentView.swift; sourceTree = "<group>"; };
+		B10026 /* EventsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsPanelView.swift; sourceTree = "<group>"; };
 		C10001 /* OpenSearch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenSearch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -119,6 +125,7 @@
 			children = (
 				B10007 /* SearchService.swift */,
 				B10022 /* ServerManager.swift */,
+				B10024 /* RemindersSyncManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -144,6 +151,8 @@
 				B10018 /* ThreadView.swift */,
 				B10023 /* DebugLogsView.swift */,
 				B10021 /* SettingsView.swift */,
+				B10025 /* AgentView.swift */,
+				B10026 /* EventsPanelView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -279,6 +288,9 @@
 				A10021 /* SettingsView.swift in Sources */,
 				A10022 /* ServerManager.swift in Sources */,
 				A10023 /* DebugLogsView.swift in Sources */,
+				A10024 /* RemindersSyncManager.swift in Sources */,
+				A10025 /* AgentView.swift in Sources */,
+				A10026 /* EventsPanelView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

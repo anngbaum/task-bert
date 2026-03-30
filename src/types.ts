@@ -56,6 +56,23 @@ export interface ChatHandleJoin {
   handle_id: number;
 }
 
+export interface Attachment {
+  id: number;
+  guid: string;
+  filename: string | null;
+  mime_type: string | null;
+  uti: string | null;
+  total_bytes: number | null;
+  transfer_name: string | null;
+  is_sticker: boolean;
+  transfer_state: number;
+}
+
+export interface MessageAttachmentJoin {
+  message_id: number;
+  attachment_id: number;
+}
+
 export interface LinkPreview {
   message_id: number;
   original_url: string;
@@ -124,6 +141,16 @@ export interface ThreadLinkPreview {
   author: string | null;
 }
 
+export interface ThreadAttachment {
+  id: number;
+  filename: string | null;
+  mime_type: string | null;
+  uti: string | null;
+  total_bytes: number | null;
+  transfer_name: string | null;
+  is_sticker: boolean;
+}
+
 export interface ThreadMessage {
   id: number;
   text: string | null;
@@ -133,6 +160,7 @@ export interface ThreadMessage {
   service: string | null;
   thread_originator_guid: string | null;
   has_attachments: boolean;
+  attachments: ThreadAttachment[];
   link_preview: ThreadLinkPreview | null;
 }
 

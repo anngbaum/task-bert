@@ -370,6 +370,12 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
   const today = `${todayDay}, ${todayDate}`;
   const twelveHoursAgo = localDate(new Date(now.getTime() - 12 * 60 * 60 * 1000));
   const twentyFourHoursAgo = localDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  // Compute local timezone offset string (e.g., "-07:00", "+05:30") for LLM date guidance
+  const tzOffsetMin = now.getTimezoneOffset();
+  const tzSign = tzOffsetMin <= 0 ? '+' : '-';
+  const tzHours = String(Math.floor(Math.abs(tzOffsetMin) / 60)).padStart(2, '0');
+  const tzMins = String(Math.abs(tzOffsetMin) % 60).padStart(2, '0');
+  const tzOffset = `${tzSign}${tzHours}:${tzMins}`;
   const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
   // Split chats into recent (≤2 weeks) and older (>2 weeks) based on latest message
@@ -438,11 +444,11 @@ Your response is the COMPLETE, authoritative list of what's still relevant. Item
 Respond with ONLY valid JSON:
 {
   "key_events": [
-    { "message_id": 456, "title": "Dinner on Saturday", "date": "2026-03-28T19:00:00Z", "location": "Nobu Malibu" }
+    { "message_id": 456, "title": "Dinner on Saturday", "date": "2026-03-28T19:00:00${tzOffset}", "location": "Nobu Malibu" }
   ],
   "tasks": [
     { "message_id": 789, "title": "Send Mike the address", "date": null, "priority": "high", "key_event_index": null },
-    { "message_id": 456, "title": "Confirm dinner reservation", "date": "2026-03-27T00:00:00Z", "priority": "low", "key_event_index": 0 }
+    { "message_id": 456, "title": "Confirm dinner reservation", "date": "2026-03-27T12:00:00${tzOffset}", "priority": "low", "key_event_index": 0 }
   ]
 }
 
@@ -450,10 +456,11 @@ FIELD GUIDANCE:
 - "message_id": The MSG-### ID of the originating message. Always include this.
 - "title": Be specific. Include the person's name and what the item is about.
 - "priority": "high" for explicit commitments/requests, "low" for softer follow-ups.
-- "date": Based on conversation content, not arbitrary defaults.
+- "date": Based on conversation content, not arbitrary defaults. IMPORTANT: Use the local timezone offset ${tzOffset} (NOT "Z"/UTC) so dates display correctly. For all-day events, use noon local time: "${todayDate}T12:00:00${tzOffset}".
   - If they say "dinner tomorrow" and today is ${today}, the date is tomorrow.
   - If they say "this weekend", use Saturday.
   - If they mention a specific date ("on the 25th", "March 30"), use that date.
+  - If a specific time is mentioned (e.g. "7pm"), use that time with the local offset: "2026-03-28T19:00:00${tzOffset}".
   - If no timeframe is mentioned, use null.
 - "location": For key events, the venue or place if mentioned (e.g. "Nobu Malibu", "Central Park"). Use null if not mentioned.
 - "key_event_index": Zero-based index into the key_events array in THIS response. Use to link a task to an event. Use null if unrelated.
@@ -483,10 +490,10 @@ Your response is the COMPLETE, authoritative list of what's still relevant. Item
 Respond with ONLY valid JSON:
 {
   "key_events": [
-    { "message_id": 456, "title": "Maddy's birthday", "date": "2026-04-05T00:00:00Z", "location": null }
+    { "message_id": 456, "title": "Maddy's birthday", "date": "2026-04-05T12:00:00${tzOffset}", "location": null }
   ],
   "tasks": [
-    { "message_id": 456, "title": "Wish Maddy happy birthday", "date": "2026-04-05T00:00:00Z", "priority": "low", "key_event_index": 0 }
+    { "message_id": 456, "title": "Wish Maddy happy birthday", "date": "2026-04-05T12:00:00${tzOffset}", "priority": "low", "key_event_index": 0 }
   ]
 }
 
@@ -494,7 +501,7 @@ FIELD GUIDANCE:
 - "message_id": The MSG-### ID of the originating message. Always include this.
 - "title": Be specific. Include the person's name.
 - "priority": Always "low" for old conversations — do not create high-priority tasks.
-- "date": Must be a real date from the conversation, today (${today}) or later.
+- "date": Must be a real date from the conversation, today (${today}) or later. Use local timezone offset ${tzOffset} (NOT "Z"/UTC). For all-day events use noon: "YYYY-MM-DDT12:00:00${tzOffset}".
 - "key_event_index": Zero-based index into the key_events array in THIS response.
 - If nothing to extract, return empty arrays for all fields.
 
@@ -585,6 +592,16 @@ No markdown fencing, no explanation.`;
       // Delete existing active (non-completed, non-removed) items for this chat —
       // the LLM response is now the source of truth for what's still relevant.
       // User-completed and user-removed items are preserved.
+      // Preserve reminder_id mappings so synced Reminders survive resync.
+      const reminderMap = new Map<string, string>();
+      const existingTasks = await db.query(
+        'SELECT title, reminder_id FROM tasks WHERE chat_id = $1 AND reminder_id IS NOT NULL',
+        [chat.chatId]
+      );
+      for (const row of existingTasks.rows as { title: string; reminder_id: string }[]) {
+        reminderMap.set(row.title, row.reminder_id);
+      }
+
       await db.query('UPDATE tasks SET key_event_id = NULL WHERE chat_id = $1', [chat.chatId]);
       await db.query('DELETE FROM key_events WHERE chat_id = $1 AND (removed = false OR removed IS NULL)', [chat.chatId]);
       await db.query('DELETE FROM tasks WHERE chat_id = $1 AND completed = false', [chat.chatId]);
@@ -608,9 +625,10 @@ No markdown fencing, no explanation.`;
           ? newEventIds[task.key_event_index]
           : null;
 
+        const restoredReminderId = reminderMap.get(task.title) ?? null;
         await db.query(
-          `INSERT INTO tasks (chat_id, message_id, title, date, priority, key_event_id) VALUES ($1, $2, $3, $4, $5, $6)`,
-          [chat.chatId, task.message_id, task.title, task.date, priority, keyEventId]
+          `INSERT INTO tasks (chat_id, message_id, title, date, priority, key_event_id, reminder_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [chat.chatId, task.message_id, task.title, task.date, priority, keyEventId, restoredReminderId]
         );
         console.log(`  [tasks] ${i + 1}/${allChats.length} "${chat.chatName}" → [${priority}] ${task.title}`);
         totalNew++;

@@ -9,6 +9,8 @@ import {
   extractMessagesBatched,
   extractChatMessageJoins,
   extractChatHandleJoins,
+  extractAttachments,
+  extractMessageAttachmentJoins,
 } from '../etl/extract.js';
 import { transformMessages } from '../etl/transform.js';
 import {
@@ -18,6 +20,8 @@ import {
   loadChatMessageJoins,
   loadChatHandleJoins,
   loadLinkPreviews,
+  loadAttachments,
+  loadMessageAttachmentJoins,
   populateTextSearch,
   getAffectedChatIds,
 } from '../etl/load.js';
@@ -164,6 +168,15 @@ async function runETL(afterDate?: Date, stageBase: number = 0): Promise<ETLResul
   const linkPreviews = transformLinkPreviews(linkRows);
   const linkCount = await loadLinkPreviews(pg, linkPreviews);
   console.log(`  Loaded ${linkCount} link previews`);
+
+  // Attachments
+  console.log('Syncing attachments...');
+  const attachments = extractAttachments(sqlite);
+  const attachmentCount = await loadAttachments(pg, attachments);
+  console.log(`  Loaded ${attachmentCount} attachments`);
+  const maJoins = extractMessageAttachmentJoins(sqlite, afterDate);
+  await loadMessageAttachmentJoins(pg, maJoins);
+  console.log(`  Loaded ${maJoins.length} message-attachment joins`);
 
   // Full-text search
   console.log('Updating text search index...');
@@ -341,6 +354,13 @@ export async function syncSingleConversation(chatId: number, llmConfig: LLMConfi
   // Load the joins for this chat
   const relevantJoins = cmJoins.filter((j) => j.chat_id === chatId);
   await loadChatMessageJoins(pg, relevantJoins);
+
+  // Load attachments for this chat's messages
+  const attachments = extractAttachments(sqlite);
+  await loadAttachments(pg, attachments);
+  const maJoins = extractMessageAttachmentJoins(sqlite, sevenDaysAgo);
+  const relevantMaJoins = maJoins.filter((j) => chatMessageIds.has(j.message_id));
+  await loadMessageAttachmentJoins(pg, relevantMaJoins);
 
   await populateTextSearch(pg);
   sqlite.close();

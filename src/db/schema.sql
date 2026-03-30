@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority TEXT NOT NULL DEFAULT 'low',
   key_event_id INTEGER REFERENCES key_events(id),
   completed BOOLEAN DEFAULT FALSE,
+  reminder_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -96,6 +97,24 @@ CREATE TABLE IF NOT EXISTS link_preview (
   author TEXT
 );
 
+CREATE TABLE IF NOT EXISTS attachment (
+  id INTEGER PRIMARY KEY,
+  guid TEXT UNIQUE NOT NULL,
+  filename TEXT,
+  mime_type TEXT,
+  uti TEXT,
+  total_bytes INTEGER,
+  transfer_name TEXT,
+  is_sticker BOOLEAN DEFAULT FALSE,
+  transfer_state INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS message_attachment_join (
+  message_id INTEGER NOT NULL,
+  attachment_id INTEGER NOT NULL,
+  PRIMARY KEY (message_id, attachment_id)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_message_text_search ON message USING GIN (text_search);
 CREATE INDEX IF NOT EXISTS idx_message_date ON message (date);
@@ -105,3 +124,4 @@ CREATE INDEX IF NOT EXISTS idx_message_associated_type ON message (associated_me
 CREATE INDEX IF NOT EXISTS idx_chat_message_join_message ON chat_message_join (message_id);
 CREATE INDEX IF NOT EXISTS idx_chat_handle_join_handle ON chat_handle_join (handle_id);
 CREATE INDEX IF NOT EXISTS idx_message_date_id ON message (date, id);
+CREATE INDEX IF NOT EXISTS idx_message_attachment_join_attachment ON message_attachment_join (attachment_id);

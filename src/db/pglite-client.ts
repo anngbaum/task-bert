@@ -43,6 +43,7 @@ export async function initSchema(): Promise<void> {
   try {
     await db.exec('ALTER TABLE key_events ADD COLUMN IF NOT EXISTS removed BOOLEAN DEFAULT FALSE;');
     await db.exec('ALTER TABLE key_events ADD COLUMN IF NOT EXISTS location TEXT;');
+    await db.exec('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reminder_id TEXT;');
   } catch {
     // Columns may already exist
   }

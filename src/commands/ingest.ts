@@ -7,9 +7,11 @@ import {
   extractMessagesBatched,
   extractChatMessageJoins,
   extractChatHandleJoins,
+  extractAttachments,
+  extractMessageAttachmentJoins,
 } from '../etl/extract.js';
 import { transformMessages } from '../etl/transform.js';
-import { loadHandles, loadChats, loadMessages, loadChatMessageJoins, loadChatHandleJoins, loadLinkPreviews, populateTextSearch } from '../etl/load.js';
+import { loadHandles, loadChats, loadMessages, loadChatMessageJoins, loadChatHandleJoins, loadLinkPreviews, loadAttachments, loadMessageAttachmentJoins, populateTextSearch } from '../etl/load.js';
 import { extractLinkPreviewRows, transformLinkPreviews } from '../etl/link-preview.js';
 import { buildContactMap, resolveHandle } from '../contacts/address-book.js';
 
@@ -85,6 +87,15 @@ export async function ingest(options: IngestOptions = {}): Promise<void> {
   const linkPreviews = transformLinkPreviews(linkRows);
   const linkCount = await loadLinkPreviews(pg, linkPreviews);
   console.log(`  Loaded ${linkCount} link previews`);
+
+  // Extract and load attachments
+  console.log('Extracting attachments...');
+  const attachments = extractAttachments(sqlite);
+  const attachmentCount = await loadAttachments(pg, attachments);
+  console.log(`  Loaded ${attachmentCount} attachments`);
+  const maJoins = extractMessageAttachmentJoins(sqlite, afterDate);
+  const maCount = await loadMessageAttachmentJoins(pg, maJoins);
+  console.log(`  Loaded ${maCount} message-attachment joins`);
 
   // Populate full-text search vectors
   console.log('Populating text search index...');

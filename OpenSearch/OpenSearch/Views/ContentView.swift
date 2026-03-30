@@ -2,23 +2,27 @@ import SwiftUI
 
 enum AppTab: String, CaseIterable, Identifiable {
     case actions = "Actions Needed"
+    case events = "Events"
     case conversations = "Recent Conversations"
     case search = "Search Messages"
+    case agent = "Ask"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .actions: "checklist"
+        case .events: "calendar.badge.clock"
         case .conversations: "bubble.left.and.text.bubble.right"
         case .search: "magnifyingglass"
+        case .agent: "sparkles"
         }
     }
 }
 
 struct ContentView: View {
     @StateObject private var viewModel = SearchViewModel()
-    @State private var selectedTab: AppTab = .search
+    @State private var selectedTab: AppTab = .actions
     @State private var showSettings: Bool = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
 
@@ -78,12 +82,24 @@ struct ContentView: View {
                             } else {
                                 apiKeyRequiredView
                             }
+                        case .events:
+                            if viewModel.hasApiKey {
+                                EventsPanelView(viewModel: viewModel)
+                            } else {
+                                apiKeyRequiredView
+                            }
                         case .search:
                             SearchBarView(viewModel: viewModel)
                                 .padding(.horizontal)
                                 .padding(.top, 8)
                                 .zIndex(1)
                             ResultsListView(viewModel: viewModel)
+                        case .agent:
+                            if viewModel.hasApiKey {
+                                AgentView(viewModel: viewModel)
+                            } else {
+                                apiKeyRequiredView
+                            }
                         }
                     }
                     .opacity(viewModel.threadAnchorId == nil ? 1 : 0)
@@ -136,7 +152,7 @@ struct ContentView: View {
     }
 
     private func tabButton(_ tab: AppTab) -> some View {
-        let requiresKey = (tab == .actions || tab == .conversations)
+        let requiresKey = (tab == .actions || tab == .events || tab == .conversations || tab == .agent)
         let disabled = requiresKey && !viewModel.hasApiKey
 
         return Button {
@@ -156,6 +172,9 @@ struct ContentView: View {
                 }
                 if tab == .actions && !viewModel.tasks.isEmpty {
                     badgeView(count: viewModel.tasks.count, color: .orange)
+                }
+                if tab == .events && !viewModel.keyEvents.isEmpty {
+                    badgeView(count: viewModel.keyEvents.count, color: .purple)
                 }
             }
             .padding(.horizontal, 10)

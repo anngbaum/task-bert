@@ -1,5 +1,5 @@
 import { getPglite } from '../db/pglite-client.js';
-import type { ThreadMessage, ThreadChatInfo, ThreadCursor, ThreadResponse } from '../types.js';
+import type { ThreadMessage, ThreadAttachment, ThreadChatInfo, ThreadCursor, ThreadResponse } from '../types.js';
 
 // --- Cursor helpers ---
 
@@ -109,10 +109,44 @@ async function getThreadPage(
   // For 'older' direction, results came in DESC order — reverse to chronological
   if (direction === 'older') sliced.reverse();
 
+  // Batch-load attachments for messages that have them
+  const msgIdsWithAttachments = sliced.filter(r => r.has_attachments).map(r => r.id);
+  const attachmentMap = await loadAttachmentsForMessages(msgIdsWithAttachments);
+
   return {
-    messages: sliced.map(formatRow),
+    messages: sliced.map(r => formatRow(r, attachmentMap.get(r.id) ?? [])),
     hasMore,
   };
+}
+
+// --- Attachment loading ---
+
+async function loadAttachmentsForMessages(messageIds: number[]): Promise<Map<number, ThreadAttachment[]>> {
+  if (messageIds.length === 0) return new Map();
+  const db = await getPglite();
+  const result = await db.query(
+    `SELECT maj.message_id, a.id, a.filename, a.mime_type, a.uti,
+            a.total_bytes, a.transfer_name, a.is_sticker
+     FROM message_attachment_join maj
+     JOIN attachment a ON a.id = maj.attachment_id
+     WHERE maj.message_id = ANY($1::int[])`,
+    [messageIds]
+  );
+  const map = new Map<number, ThreadAttachment[]>();
+  for (const row of result.rows as any[]) {
+    const msgId = row.message_id;
+    if (!map.has(msgId)) map.set(msgId, []);
+    map.get(msgId)!.push({
+      id: row.id,
+      filename: row.filename,
+      mime_type: row.mime_type,
+      uti: row.uti,
+      total_bytes: row.total_bytes,
+      transfer_name: row.transfer_name,
+      is_sticker: row.is_sticker,
+    });
+  }
+  return map;
 }
 
 // --- Row formatting ---
@@ -134,7 +168,7 @@ interface RawThreadRow {
   lp_author: string | null;
 }
 
-function formatRow(row: RawThreadRow): ThreadMessage {
+function formatRow(row: RawThreadRow, attachments: ThreadAttachment[] = []): ThreadMessage {
   return {
     id: row.id,
     text: row.text,
@@ -144,6 +178,7 @@ function formatRow(row: RawThreadRow): ThreadMessage {
     service: row.service,
     thread_originator_guid: row.thread_originator_guid,
     has_attachments: row.has_attachments,
+    attachments,
     link_preview: row.lp_original_url ? {
       original_url: row.lp_original_url,
       canonical_url: row.lp_canonical_url,
@@ -234,9 +269,14 @@ export async function getThread(options: ThreadOptions): Promise<ThreadResponse>
     getThreadPage(chatInfo.chat_id, 'newer', anchorDate, messageId, afterCount),
   ]);
 
+  // Load attachments for the anchor message
+  const anchorAttachments = anchorRow.has_attachments
+    ? (await loadAttachmentsForMessages([anchorRow.id])).get(anchorRow.id) ?? []
+    : [];
+
   const allMessages = [
     ...olderPage.messages,
-    formatRow(anchorRow),
+    formatRow(anchorRow, anchorAttachments),
     ...newerPage.messages,
   ];
 

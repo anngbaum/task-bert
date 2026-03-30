@@ -260,6 +260,47 @@ actor SearchService {
         }
     }
 
+    func createTask(title: String, date: Date?, priority: String, chatId: Int?, keyEventId: Int?) async throws {
+        let url = baseURL.appendingPathComponent("api/tasks/create")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: Any] = ["title": title, "priority": priority]
+        if let date {
+            body["date"] = ISO8601DateFormatter().string(from: date)
+        }
+        if let chatId {
+            body["chat_id"] = chatId
+        }
+        if let keyEventId {
+            body["key_event_id"] = keyEventId
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+    }
+
+    func setReminderId(taskId: Int, reminderId: String?) async throws {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/tasks/set-reminder"), resolvingAgainstBaseURL: false)!
+        var queryItems = [URLQueryItem(name: "id", value: String(taskId))]
+        if let reminderId {
+            queryItems.append(URLQueryItem(name: "reminderId", value: reminderId))
+        }
+        components.queryItems = queryItems
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+    }
+
     func fetchActions(includeCompleted: Bool = false) async throws -> ActionsResponse {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/actions"), resolvingAgainstBaseURL: false)!
         if includeCompleted {
@@ -271,6 +312,83 @@ actor SearchService {
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
         }
         return try decoder.decode(ActionsResponse.self, from: data)
+    }
+
+    // MARK: - Agent
+
+    struct AgentMessageLink: Decodable, Identifiable {
+        let message_id: Int
+        let text: String
+        let sender: String
+        let date: String?
+        let chat_name: String?
+
+        var id: Int { message_id }
+    }
+
+    struct AgentResponse: Decodable {
+        let answer: String
+        let message_links: [AgentMessageLink]
+        let tool_calls_count: Int
+
+        enum CodingKeys: String, CodingKey {
+            case answer, message_links, tool_calls_count
+        }
+    }
+
+    struct AgentProgressEvent {
+        let eventType: String   // "thinking", "tool_call", "tool_result"
+        let description: String
+        let tool: String?
+        let resultSummary: String?
+    }
+
+    /// Streams the agent response. Calls onProgress for each progress event, returns final AgentResponse.
+    func runAgentStreaming(query: String, onProgress: @Sendable @escaping (AgentProgressEvent) -> Void) async throws -> AgentResponse {
+        let url = baseURL.appendingPathComponent("api/agent")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 120
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+
+        var finalResponse: AgentResponse?
+
+        for try await line in bytes.lines {
+            guard !line.isEmpty else { continue }
+            guard let data = line.data(using: .utf8) else { continue }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let stream = json["stream"] as? String else { continue }
+
+            switch stream {
+            case "progress":
+                let event = AgentProgressEvent(
+                    eventType: json["event_type"] as? String ?? "",
+                    description: json["description"] as? String ?? "",
+                    tool: json["tool"] as? String,
+                    resultSummary: json["result_summary"] as? String
+                )
+                onProgress(event)
+            case "result":
+                finalResponse = try decoder.decode(AgentResponse.self, from: data)
+            case "error":
+                let message = json["message"] as? String ?? "Unknown agent error"
+                throw SearchError.serverError(statusCode: 500)
+            default:
+                break
+            }
+        }
+
+        guard let result = finalResponse else {
+            throw SearchError.serverError(statusCode: 500)
+        }
+        return result
     }
 
     struct SettingsResponse: Decodable {

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { RawMessage, Handle, Chat, ChatMessageJoin, ChatHandleJoin } from '../types.js';
+import type { RawMessage, Handle, Chat, ChatMessageJoin, ChatHandleJoin, Attachment, MessageAttachmentJoin } from '../types.js';
 
 const APPLE_EPOCH_OFFSET = 978307200; // seconds between 1970-01-01 and 2001-01-01
 
@@ -77,4 +77,36 @@ export function extractChatHandleJoins(db: Database.Database): ChatHandleJoin[] 
   return db
     .prepare('SELECT chat_id, handle_id FROM chat_handle_join')
     .all() as ChatHandleJoin[];
+}
+
+export function extractAttachments(db: Database.Database): Attachment[] {
+  return db
+    .prepare(
+      `SELECT ROWID as id, guid, filename, mime_type, uti, total_bytes,
+              transfer_name,
+              CASE WHEN is_sticker = 1 THEN 1 ELSE 0 END as is_sticker,
+              transfer_state
+       FROM attachment`
+    )
+    .all()
+    .map((row: any) => ({
+      ...row,
+      is_sticker: !!row.is_sticker,
+    })) as Attachment[];
+}
+
+export function extractMessageAttachmentJoins(db: Database.Database, afterDate?: Date): MessageAttachmentJoin[] {
+  if (afterDate) {
+    return db
+      .prepare(
+        `SELECT maj.message_id, maj.attachment_id
+         FROM message_attachment_join maj
+         INNER JOIN message m ON m.ROWID = maj.message_id
+         WHERE m.date >= ${dateToImessageNano(afterDate)}`
+      )
+      .all() as MessageAttachmentJoin[];
+  }
+  return db
+    .prepare('SELECT message_id, attachment_id FROM message_attachment_join')
+    .all() as MessageAttachmentJoin[];
 }

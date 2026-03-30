@@ -78,11 +78,30 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var threadError: String? = nil
     @Published var threadAnchorId: Int? = nil
 
+    // Agent (agentic search)
+    @Published var agentQuery: String = ""
+    @Published private(set) var agentResponse: SearchService.AgentResponse? = nil
+    @Published private(set) var isAgentRunning: Bool = false
+    @Published private(set) var agentError: String? = nil
+    @Published private(set) var agentProgress: [AgentProgressStep] = []
+
     // API key state — controls whether LLM-powered tabs are available
     @Published var hasApiKey: Bool = false
 
     // Set to true after a hard reset completes — ContentView observes this to reset onboarding
     @Published var didCompleteHardReset: Bool = false
+
+    // Sync Reminders setting (client-only, stored in UserDefaults)
+    @Published var syncRemindersEnabled: Bool = UserDefaults.standard.bool(forKey: "syncRemindersEnabled") {
+        didSet {
+            UserDefaults.standard.set(syncRemindersEnabled, forKey: "syncRemindersEnabled")
+            if syncRemindersEnabled {
+                Task { await syncReminders() }
+            } else {
+                RemindersSyncManager.shared.stopObserving()
+            }
+        }
+    }
 
     private let service = SearchService()
     private var healthPollTask: Task<Void, Never>?
@@ -90,6 +109,18 @@ final class SearchViewModel: ObservableObject {
     init() {
         // Apply default preset dates
         filters.applyPreset(.pastMonth)
+
+        // Listen for reminders completed externally (e.g. in Reminders.app)
+        RemindersSyncManager.shared.currentTasksProvider = { [weak self] in
+            self?.tasks ?? []
+        }
+        RemindersSyncManager.shared.onRemindersCompleted = { [weak self] taskIds in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.handleRemindersCompleted(taskIds: taskIds)
+            }
+        }
+
         Task {
             await loadContacts()
             await loadGroups()
@@ -597,11 +628,36 @@ final class SearchViewModel: ObservableObject {
             let response = try await service.fetchActions()
             keyEvents = response.key_events
             tasks = response.tasks
+            if syncRemindersEnabled {
+                await syncReminders()
+            }
         } catch {
             keyEvents = []
             tasks = []
         }
         isLoadingActions = false
+    }
+
+    @MainActor
+    func syncReminders() async {
+        guard !tasks.isEmpty else { return }
+        await RemindersSyncManager.shared.syncTasks(tasks)
+        // Reload tasks to get updated reminder_ids and start watching for external changes
+        do {
+            let response = try await service.fetchActions()
+            tasks = response.tasks
+            RemindersSyncManager.shared.startObserving(tasks: tasks)
+        } catch {
+            // Silently fail
+        }
+    }
+
+    /// Called when reminders are marked complete in the Reminders app.
+    @MainActor
+    private func handleRemindersCompleted(taskIds: [Int]) async {
+        for id in taskIds {
+            await completeTask(id: id)
+        }
     }
 
     @MainActor
@@ -621,6 +677,9 @@ final class SearchViewModel: ObservableObject {
         do {
             try await service.completeTask(id: id)
             if let task = tasks.first(where: { $0.id == id }) {
+                if syncRemindersEnabled {
+                    RemindersSyncManager.shared.completeReminder(for: task)
+                }
                 completedTasks.insert(task, at: 0)
             }
             tasks.removeAll { $0.id == id }
@@ -642,6 +701,16 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
+    @MainActor
+    func createTask(title: String, date: Date?, priority: String, chatId: Int?, keyEventId: Int?) async {
+        do {
+            try await service.createTask(title: title, date: date, priority: priority, chatId: chatId, keyEventId: keyEventId)
+            await loadActions()
+        } catch {
+            // Silently fail
+        }
+    }
+
     // MARK: - Settings
 
     func fetchSettings() async throws -> SearchService.SettingsResponse {
@@ -654,6 +723,40 @@ final class SearchViewModel: ObservableObject {
 
     func updateSettings(_ updates: [String: String]) async throws {
         try await service.updateSettings(updates)
+    }
+
+    // MARK: - Agent
+
+    @MainActor
+    func runAgentQuery() async {
+        let trimmed = agentQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        isAgentRunning = true
+        agentError = nil
+        agentResponse = nil
+        agentProgress = []
+
+        do {
+            agentResponse = try await service.runAgentStreaming(query: trimmed) { [weak self] event in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    let step = AgentProgressStep(
+                        eventType: event.eventType,
+                        description: event.description,
+                        tool: event.tool,
+                        resultSummary: event.resultSummary
+                    )
+                    self.agentProgress.append(step)
+                }
+            }
+        } catch is URLError {
+            agentError = "Cannot connect to server."
+        } catch {
+            agentError = error.localizedDescription
+        }
+
+        isAgentRunning = false
     }
 
     // MARK: - Debug Logs

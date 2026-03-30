@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import type { Handle, Chat, Message, ChatMessageJoin, ChatHandleJoin, LinkPreview } from '../types.js';
+import type { Handle, Chat, Message, ChatMessageJoin, ChatHandleJoin, LinkPreview, Attachment, MessageAttachmentJoin } from '../types.js';
 
 const MULTI_ROW_BATCH = 500;
 
@@ -244,6 +244,63 @@ export async function loadLinkPreviews(db: PGlite, previews: LinkPreview[]): Pro
         }
       }
     }
+  }
+
+  return loaded;
+}
+
+export async function loadAttachments(db: PGlite, attachments: Attachment[]): Promise<number> {
+  if (attachments.length === 0) return 0;
+
+  const columns = ['id', 'guid', 'filename', 'mime_type', 'uti', 'total_bytes', 'transfer_name', 'is_sticker', 'transfer_state'];
+  let loaded = 0;
+
+  for (let i = 0; i < attachments.length; i += MULTI_ROW_BATCH) {
+    const batch = attachments.slice(i, i + MULTI_ROW_BATCH);
+    const rows = batch.map((a) => [
+      a.id, a.guid, a.filename, a.mime_type, a.uti,
+      a.total_bytes, a.transfer_name, a.is_sticker, a.transfer_state,
+    ]);
+    try {
+      const { sql, params } = buildMultiInsert('attachment', columns, rows, '(id) DO NOTHING');
+      await db.query(sql, params);
+      loaded += batch.length;
+    } catch {
+      for (const a of batch) {
+        try {
+          await db.query(
+            `INSERT INTO attachment (id, guid, filename, mime_type, uti, total_bytes, transfer_name, is_sticker, transfer_state)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO NOTHING`,
+            [a.id, a.guid, a.filename, a.mime_type, a.uti, a.total_bytes, a.transfer_name, a.is_sticker, a.transfer_state]
+          );
+          loaded++;
+        } catch {
+          // Skip problematic rows
+        }
+      }
+    }
+  }
+
+  return loaded;
+}
+
+export async function loadMessageAttachmentJoins(db: PGlite, joins: MessageAttachmentJoin[]): Promise<number> {
+  if (joins.length === 0) return 0;
+
+  const columns = ['message_id', 'attachment_id'];
+  let loaded = 0;
+
+  for (let i = 0; i < joins.length; i += MULTI_ROW_BATCH) {
+    const batch = joins.slice(i, i + MULTI_ROW_BATCH);
+    const rows = batch.map((j) => [j.message_id, j.attachment_id]);
+    try {
+      const { sql, params } = buildMultiInsert('message_attachment_join', columns, rows);
+      await db.query(sql, params);
+    } catch {
+      // Ignore conflicts
+    }
+    loaded += batch.length;
   }
 
   return loaded;

@@ -3,7 +3,7 @@ import EventKit
 
 struct ActionsPanelView: View {
     @ObservedObject var viewModel: SearchViewModel
-    @State private var expandedSections: Set<String> = ["high", "low", "events"]
+    @State private var expandedSections: Set<String> = ["high", "low"]
 
     private var highPriorityTasks: [TaskItem] {
         viewModel.tasks.filter { $0.isHighPriority }
@@ -23,7 +23,7 @@ struct ActionsPanelView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.keyEvents.isEmpty && viewModel.tasks.isEmpty && viewModel.completedTasks.isEmpty && viewModel.removedEvents.isEmpty {
+            } else if viewModel.tasks.isEmpty && viewModel.completedTasks.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "checklist")
                         .font(.system(size: 48))
@@ -87,32 +87,16 @@ struct ActionsPanelView: View {
                                 }
                             }
 
-                            // Key Events
-                            if !viewModel.keyEvents.isEmpty {
-                                CollapsibleSection(
-                                    title: "Key Events",
-                                    icon: "calendar.badge.clock",
-                                    color: .purple,
-                                    count: viewModel.keyEvents.count,
-                                    isExpanded: expandedSections.contains("events"),
-                                    onToggle: { toggleSection("events") }
-                                ) {
-                                    ForEach(viewModel.keyEvents) { event in
-                                        EventRowView(event: event, viewModel: viewModel)
-                                    }
-                                }
-                            }
-
                             // All caught up
-                            if viewModel.tasks.isEmpty && !viewModel.keyEvents.isEmpty {
+                            if viewModel.tasks.isEmpty {
                                 Text("All caught up!")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .padding(.vertical, 8)
                             }
 
-                            // Completed & Removed toggle
-                            let archivedTotal = viewModel.completedTasks.count + viewModel.removedEvents.count
+                            // Completed toggle
+                            let archivedTotal = viewModel.completedTasks.count
                             if archivedTotal > 0 || viewModel.showCompletedActions {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -126,7 +110,7 @@ struct ActionsPanelView: View {
                                         Image(systemName: "chevron.right")
                                             .font(.system(size: 8))
                                             .rotationEffect(.degrees(viewModel.showCompletedActions ? 90 : 0))
-                                        Text("Completed & Removed (\(archivedTotal))")
+                                        Text("Completed (\(archivedTotal))")
                                             .font(.caption2)
                                         Spacer()
                                     }
@@ -141,22 +125,6 @@ struct ActionsPanelView: View {
                                 if !viewModel.completedTasks.isEmpty {
                                     ForEach(viewModel.completedTasks) { task in
                                         CompletedRowView(title: task.title, chatName: task.chat_name)
-                                    }
-                                }
-
-                                if !viewModel.removedEvents.isEmpty {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "trash")
-                                            .font(.system(size: 9))
-                                            .foregroundStyle(.secondary)
-                                        Text("Removed Events")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.top, 6)
-
-                                    ForEach(viewModel.removedEvents) { event in
-                                        RemovedEventRowView(title: event.title, chatName: event.chat_name)
                                     }
                                 }
                             }

@@ -58,6 +58,24 @@ struct SettingsView: View {
 
                     Divider()
 
+                    // Sync Reminders
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle(isOn: $viewModel.syncRemindersEnabled) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checklist")
+                                    .foregroundStyle(.blue)
+                                Text("Sync Reminders")
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        Text("Export high and low priority tasks to Apple Reminders")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Divider()
+
                     HStack {
                         Button {
                             showDebugLogs = true
@@ -105,7 +123,7 @@ struct SettingsView: View {
             }
         }
         .padding(20)
-        .frame(width: 460, height: 440)
+        .frame(width: 460, height: 520)
         .task { await loadSettings() }
         .sheet(isPresented: $showDebugLogs) {
             DebugLogsView(viewModel: viewModel)
