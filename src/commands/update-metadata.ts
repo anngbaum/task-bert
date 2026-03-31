@@ -411,24 +411,25 @@ Examples: "Send Mike the photos", "Book the restaurant for Friday", "Call Mom ba
 **low** — Softer suggestions. No explicit promise was made, but "Me" might want to follow up.
 Examples: "Check in with Sarah about her new job", "Wish Maddy happy birthday", "Follow up on weekend plans"
 
+CRITICAL: Before creating ANY task, scan the ENTIRE conversation to check if "Me" already did it. If "Me" already responded, asked, confirmed, or followed up — do NOT create a task for it. Only create tasks for things that are genuinely still pending.
+
 Create a task when:
-- "Me" explicitly agreed or offered to do something (high priority)
-- Someone made a direct, specific request (high priority)
-- Someone asked "Me" a specific question and "Me" has NOT responded yet. This is an unanswered question.
+- "Me" explicitly agreed or offered to do something AND has not done it yet in the conversation (high priority)
+- Someone made a direct, specific request AND "Me" has not addressed it yet (high priority)
+- Someone asked "Me" a specific question and "Me" has NOT responded yet anywhere later in the conversation. This is an unanswered question.
   - If the question was asked more than 24 hours ago (before ${twentyFourHoursAgo}): **high** priority — "Respond to [Name]'s question about [topic]"
   - If the question was asked more than 12 hours ago (before ${twelveHoursAgo}): **low** priority — "Respond to [Name]'s question about [topic]"
   - If the question was asked less than 12 hours ago: do not create a task yet.
-- A key event is coming up and "Me" might want to acknowledge it (low priority)
-- Someone shared news that warrants a check-in later (low priority)
-- The conversation trailed off and "Me" might want to re-engage (low priority)
 
 DO NOT create tasks for:
+- Things "Me" already handled later in the conversation — e.g. if someone asked a question and "Me" responded, that is RESOLVED, not a task
+- Questions "Me" already asked — if "Me" asked someone a question and they answered, there is no task for "Me"
 - Conversations that ended naturally with no pending obligations (but DO create tasks for unanswered questions even if the conversation seems casual)
 - Rhetorical questions or casual greetings (e.g. "lol", "haha", "nice") — but a real question like "how was your trip?" or "what happened with X?" IS a specific question that deserves a task if unanswered
-- Things "Me" already handled later in the conversation
 - Anything tied to a date that has already passed (before ${today})
 - One-time verification codes, OTPs, 2FA codes, or login tokens
-- Soft follow-ups like "check in on X" if the conversation has clearly moved on to a new topic since then
+- Soft follow-ups like "check in on X" or "ask about X" if the conversation already covers that topic
+- Speculative follow-ups — do NOT create tasks suggesting "Me" should ask about details, check in, or follow up unless there is a clear unresolved obligation
 
 Each task should appear ONCE. Never create duplicate tasks for the same underlying thing.
 
@@ -571,7 +572,7 @@ No markdown fencing, no explanation.`;
       const text = await callLLM(
         config,
         systemPrompt,
-        `=== Chat ${chat.chatId}: "${chat.chatName}" ===\n${msgLines}${existingBlock}`,
+        `=== Chat with ${chat.chatName} ===\nMessages labeled "Me" are from the user. Messages labeled with other names are from contacts.\n\n${msgLines}${existingBlock}`,
         1024
       );
       const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
