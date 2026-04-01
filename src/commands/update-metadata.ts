@@ -236,13 +236,17 @@ export async function updateMetadata(config: LLMConfig, options: MetadataOptions
     console.log('[metadata] No chats with new messages to summarize.');
   } else {
     console.log(`[metadata] Summarizing ${chats.length} chat(s)...`);
+    const SUMMARY_CONCURRENCY = 5;
+    let completed = 0;
 
-    for (let i = 0; i < chats.length; i++) {
-      const chat = chats[i];
-      console.log(`  [metadata] ${i + 1}/${chats.length}: "${chat.chatName}"...`);
-      updateSyncProgress('metadata', `Summarizing chat ${i + 1}/${chats.length}: ${chat.chatName}`, 85 + Math.round((i / chats.length) * 12));
+    for (let batchStart = 0; batchStart < chats.length; batchStart += SUMMARY_CONCURRENCY) {
+      const batch = chats.slice(batchStart, batchStart + SUMMARY_CONCURRENCY);
+      updateSyncProgress('metadata', `Summarizing chats ${batchStart + 1}–${Math.min(batchStart + SUMMARY_CONCURRENCY, chats.length)} of ${chats.length}...`, 85 + Math.round((batchStart / chats.length) * 12));
 
-      try {
+      const results = await Promise.allSettled(batch.map(async (chat, j) => {
+        const i = batchStart + j;
+        console.log(`  [metadata] ${i + 1}/${chats.length}: "${chat.chatName}"...`);
+
         const msgLines = chat.messages.map((m) =>
           `[${m.date}] ${m.sender}: ${m.text}`
         ).join('\n');
@@ -258,16 +262,25 @@ Respond with ONLY the summary text. No JSON, no markdown, no explanation.`,
           512
         )).trim();
 
-        await db.query(
-          `INSERT INTO chat_metadata (chat_id, summary, last_updated)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (chat_id) DO UPDATE SET summary = $2, last_updated = $3`,
-          [chat.chatId, summary, now.toISOString()]
-        );
-        totalSummaries++;
-        console.log(`    → ${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}`);
-      } catch (err) {
-        console.error(`    ✗ Failed: ${(err as Error).message}`);
+        return { chat, summary };
+      }));
+
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          const { chat, summary } = result.value;
+          await db.query(
+            `INSERT INTO chat_metadata (chat_id, summary, last_updated)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (chat_id) DO UPDATE SET summary = $2, last_updated = $3`,
+            [chat.chatId, summary, now.toISOString()]
+          );
+          totalSummaries++;
+          completed++;
+          console.log(`    → ${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}`);
+        } else {
+          completed++;
+          console.error(`    ✗ Failed: ${(result.reason as Error).message}`);
+        }
       }
     }
   }
@@ -363,7 +376,49 @@ function parseJSON<T>(text: string): T {
     const end = toParse.lastIndexOf('}');
     if (start !== -1 && end !== -1) toParse = toParse.slice(start, end + 1);
   }
-  return JSON.parse(toParse);
+  try {
+    return JSON.parse(toParse);
+  } catch {
+    // LLM may return trailing text after valid JSON — find the balanced closing brace
+    const start = toParse.indexOf('{');
+    if (start !== -1) {
+      let depth = 0;
+      for (let i = start; i < toParse.length; i++) {
+        if (toParse[i] === '{') depth++;
+        else if (toParse[i] === '}') depth--;
+        if (depth === 0) {
+          return JSON.parse(toParse.slice(start, i + 1));
+        }
+      }
+    }
+    throw new Error(`JSON parse failed: ${toParse.slice(0, 200)}`);
+  }
+}
+
+/** Call LLM and parse JSON response, retrying on parse or transient failures. */
+async function callLLMJSON<T>(
+  config: LLMConfig,
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number,
+  model: string,
+  retries = 2,
+): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const text = await callLLM(config, systemPrompt, userPrompt, maxTokens, model);
+      return parseJSON<T>(text);
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt < retries) {
+        const delay = 1000 * (attempt + 1);
+        console.warn(`  [retry] Attempt ${attempt + 1} failed (${lastError.message}), retrying in ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError!;
 }
 
 /** Shared date/time context for prompts. */
@@ -429,15 +484,13 @@ Respond with ONLY valid JSON:
 DATES: Use timezone ${ctx.tzOffset} (not UTC "Z"). All-day events use noon: "YYYY-MM-DDT12:00:00${ctx.tzOffset}". Empty list if nothing to extract. No markdown fencing.`;
 
   const actionsModel = config.actionsModel ?? (config.anthropicApiKey ? 'claude-sonnet-4-6' : 'gpt-4o');
-  const text = await callLLM(
+  const parsed = await callLLMJSON<{ events: { message_id: number; title: string; date: string | null; location: string | null }[] }>(
     config,
     systemPrompt,
     `=== Chat with ${chat.chatName} ===\n${msgLines}${existingBlock}`,
     512,
     actionsModel
   );
-
-  const parsed = parseJSON<{ events: { message_id: number; title: string; date: string | null; location: string | null }[] }>(text);
 
   // Hard filter: drop any events the LLM returned with past dates
   const todayStart = new Date(`${ctx.todayDate}T00:00:00`);
@@ -487,33 +540,36 @@ async function extractTasks(
 
   const systemPrompt = `Extract tasks for "Me" (the user) from this iMessage conversation. Today is ${ctx.today}.
 
+Only create tasks where Me has a clear obligation or someone is clearly waiting on Me. When in doubt, don't create a task.
+
 ## WHAT TO EXTRACT
 
-Scan the conversation end-to-start. For each item, ask: "Does Me still need to do something?"
-
-1. **Unanswered questions** — Someone asked Me a question and Me has NOT replied later in the conversation.
+1. **Unanswered questions** — Someone asked Me a direct question and Me has NOT replied later in the conversation.
    - Asked before ${ctx.twentyFourHoursAgo} → type: "action", priority: "high"
    - Asked before ${ctx.twelveHoursAgo} → type: "action", priority: "low"
    - Asked less than 12h ago → skip (too soon)
 
-2. **Unfulfilled commitments** — Me agreed/offered to do something but hasn't done it yet in the conversation.
+2. **Unfulfilled commitments** — Me explicitly agreed or offered to do something and hasn't done it yet.
    → type: "action", priority: "high"
 
-3. **Unaddressed requests** — Someone directly asked Me to do something and Me hasn't addressed it.
+3. **Unaddressed requests** — Someone directly asked Me to do something specific and Me hasn't addressed it.
    → type: "action", priority: "high"
 
 4. **Waiting on others** — Me asked a question or made a request and is waiting for their reply.
    → type: "waiting"
 
-5. **Future follow-ups** — A future event/change was mentioned that Me would want to follow up on.
-   → type: "action", date: the future date, trigger_hint: what would make it relevant sooner
+5. **Concrete future follow-ups** — Me and someone made a specific plan to do something in the future (e.g. "let's do a bakery crawl this spring", "we should get dinner when you're in town"). These MUST have a date — estimate from context (e.g. "this spring" → late April, "next month" → mid next month). If you can't estimate a reasonable date, don't create the task.
+   → type: "action", priority: "low", date: estimated future date, trigger_hint: what would make it relevant
 
 ## WHAT IS NOT A TASK
 
-- Something Me already did in the conversation (asked, replied, sent, confirmed) → DONE
-- A confirmed plan with no remaining action → not a task
+- A general ask in a group chat that is not directed at Me
+- Something Me already did in the conversation (asked, replied, sent, confirmed)
+- A confirmed plan with no remaining action for Me
+- Vague ideas with no commitment ("that would be fun", "we should sometime")
 - Rhetorical questions, greetings, casual banter
 - Verification codes, OTPs, spam
+- Venmo requests or automated payment notifications
 - Anything with a date before ${ctx.today}
 
 ## OUTPUT
@@ -527,20 +583,18 @@ FIELDS:
 - title: Be specific. Include the person's name and topic.
 - type: "action" (Me needs to act) or "waiting" (someone else needs to act first)
 - priority: "high" (explicit commitment/request) or "low" (softer follow-up)
-- date: Due date or activation date. Use timezone ${ctx.tzOffset} (not UTC). null if no deadline.
+- date: Due date or activation date. Use timezone ${ctx.tzOffset} (not UTC). null if no deadline. Future follow-ups MUST have a date.
 - trigger_hint: What event would make a future task relevant sooner. null if not applicable.
 Empty list if nothing to extract. No markdown fencing.`;
 
   const actionsModel = config.actionsModel ?? (config.anthropicApiKey ? 'claude-sonnet-4-6' : 'gpt-4o');
-  const text = await callLLM(
+  const parsed = await callLLMJSON<{ tasks: { message_id: number; title: string; date: string | null; priority: string; type: string; trigger_hint: string | null }[] }>(
     config,
     systemPrompt,
     `=== Chat with ${chat.chatName} ===\nMessages labeled "Me" are from the user. Messages labeled with other names are from contacts.\n\n${msgLines}${existingBlock}`,
     512,
     actionsModel
   );
-
-  const parsed = parseJSON<{ tasks: { message_id: number; title: string; date: string | null; priority: string; type: string; trigger_hint: string | null }[] }>(text);
   for (const task of parsed.tasks) {
     const type = task.type === 'waiting' ? 'waiting' : 'action';
     const priority = task.priority === 'high' ? 'high' : 'low';
@@ -576,14 +630,18 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
 
   let totalNew = 0;
   const allChats = [...olderChats, ...recentChats];
+  const CONCURRENCY = 5;
 
-  for (let i = 0; i < allChats.length; i++) {
-    const chat = allChats[i];
-    const latestMsg = chat.messages[chat.messages.length - 1];
-    const isRecent = latestMsg ? new Date(latestMsg.isoDate) >= ctx.twoWeeksAgo : false;
+  // Process chats in parallel batches
+  for (let batchStart = 0; batchStart < allChats.length; batchStart += CONCURRENCY) {
+    const batch = allChats.slice(batchStart, batchStart + CONCURRENCY);
 
-    try {
-      // Preserve reminder_id mappings so synced Reminders survive resync
+    // Pre-fetch reminder mappings for this batch (DB reads before parallel LLM calls)
+    const batchContext = await Promise.all(batch.map(async (chat, j) => {
+      const i = batchStart + j;
+      const latestMsg = chat.messages[chat.messages.length - 1];
+      const isRecent = latestMsg ? new Date(latestMsg.isoDate) >= ctx.twoWeeksAgo : false;
+
       const reminderMap = new Map<string, string>();
       const reminderRows = await db.query(
         'SELECT title, reminder_id FROM tasks WHERE chat_id = $1 AND reminder_id IS NOT NULL',
@@ -599,19 +657,42 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
         await db.query('DELETE FROM tasks WHERE chat_id = $1 AND completed = false', [chat.chatId]);
       }
 
-      // Extract events (all chats)
+      return { chat, i, isRecent, reminderMap };
+    }));
+
+    // Run LLM extraction in parallel
+    const batchResults = await Promise.allSettled(batchContext.map(async ({ chat, i, isRecent }) => {
       const events = await extractEvents(config, chat, i, allChats.length, ctx);
+      const tasks = isRecent ? await extractTasks(config, chat, i, allChats.length, ctx) : [];
+      return { events, tasks };
+    }));
+
+    // Write results to DB sequentially
+    for (let j = 0; j < batch.length; j++) {
+      const { chat, i, isRecent, reminderMap } = batchContext[j];
+      const result = batchResults[j];
+
+      if (result.status === 'rejected') {
+        const errMsg = (result.reason as Error).message;
+        if (errMsg.includes('JSON') || errMsg.includes('Unexpected')) {
+          console.error(`  [actions] ${i + 1}/${allChats.length} "${chat.chatName}" ✗ JSON parse failed: ${errMsg}`);
+        } else {
+          console.error(`  [actions] ${i + 1}/${allChats.length} "${chat.chatName}" ✗ ${errMsg}`);
+        }
+        continue;
+      }
+
+      const { events, tasks } = result.value;
+
       for (const event of events) {
         await db.query(
           `INSERT INTO key_events (chat_id, message_id, title, date, location) VALUES ($1, $2, $3, $4, $5)`,
-          [chat.chatId, event.message_id, event.title, event.date, event.location ?? null]
+          [chat.chatId, event.message_id, event.title, event.date, event.location?.trim() || null]
         );
         totalNew++;
       }
 
-      // Extract tasks (recent chats only — older ones are stale)
       if (isRecent) {
-        const tasks = await extractTasks(config, chat, i, allChats.length, ctx);
         for (const task of tasks) {
           const priority = task.priority === 'high' ? 'high' : 'low';
           const type = task.type === 'waiting' ? 'waiting' : 'action';
@@ -622,13 +703,6 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
           );
           totalNew++;
         }
-      }
-    } catch (err) {
-      const errMsg = (err as Error).message;
-      if (errMsg.includes('JSON') || errMsg.includes('Unexpected')) {
-        console.error(`  [actions] ${i + 1}/${allChats.length} "${chat.chatName}" ✗ JSON parse failed: ${errMsg}`);
-      } else {
-        console.error(`  [actions] ${i + 1}/${allChats.length} "${chat.chatName}" ✗ ${errMsg}`);
       }
     }
   }

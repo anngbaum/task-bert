@@ -515,6 +515,43 @@ final class SearchViewModel: ObservableObject {
         isSyncing = false
     }
 
+    @MainActor
+    func softReset() async {
+        isSyncing = true
+        lastSyncMessage = "Clearing tasks and events..."
+        chatMetadata = []
+        keyEvents = []
+        tasks = []
+        completedTasks = []
+        removedEvents = []
+
+        do {
+            try await service.softReset()
+
+            lastSyncMessage = "Re-generating metadata..."
+            while true {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                let health = try await service.fetchHealth()
+                if health.ready && !health.syncing {
+                    break
+                }
+                lastSyncMessage = progressMessage(health.progress)
+            }
+
+            lastSyncMessage = "Soft reset complete"
+            await loadChatMetadata()
+            await loadActions()
+        } catch is CancellationError {
+            lastSyncMessage = "Soft reset cancelled"
+        } catch is URLError {
+            lastSyncMessage = "Soft reset failed: cannot connect to server"
+        } catch {
+            lastSyncMessage = "Soft reset failed: \(error.localizedDescription)"
+        }
+
+        isSyncing = false
+    }
+
     // MARK: - Thread
 
     @MainActor

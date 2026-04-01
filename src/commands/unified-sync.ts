@@ -292,20 +292,20 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
     // DB may not exist yet on first run — that's fine
   }
 
-  // Wipe pgdata — close PGLite first, wait for it to release file locks
+  // Wipe pgdata — close PGLite first, wait for it to fully release file locks
   console.log('Closing PGLite...');
   await closePglite();
-  await new Promise((r) => setTimeout(r, 500));
+  // PGlite needs time to release WASM file handles — wait longer
+  await new Promise((r) => setTimeout(r, 2000));
 
-  if (fs.existsSync(PG_DATA_DIR)) {
-    console.log('Wiping PGLite database...');
-    fs.rmSync(PG_DATA_DIR, { recursive: true, force: true });
-  }
-
-  if (fs.existsSync(PG_DATA_DIR)) {
-    console.error('[hard-reset] WARNING: pgdata directory still exists after wipe, retrying...');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (fs.existsSync(PG_DATA_DIR)) {
+      console.log(`Wiping PGLite database... (attempt ${attempt + 1})`);
+      fs.rmSync(PG_DATA_DIR, { recursive: true, force: true });
+    }
+    if (!fs.existsSync(PG_DATA_DIR)) break;
+    console.warn('[hard-reset] pgdata still exists, retrying...');
     await new Promise((r) => setTimeout(r, 1000));
-    fs.rmSync(PG_DATA_DIR, { recursive: true, force: true });
   }
 
   console.log(`[hard-reset] pgdata wiped: ${!fs.existsSync(PG_DATA_DIR)}`);
@@ -315,9 +315,22 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
   updateSyncProgress('setup', 'Copying message database...', 2);
   await copyDb({ force: true });
 
-  // Init fresh PGLite
-  const pg = await getPglite();
-  await initSchema();
+  // Init fresh PGLite — create a completely new instance
+  let pg: Awaited<ReturnType<typeof getPglite>>;
+  try {
+    pg = await getPglite();
+    await initSchema();
+  } catch (err) {
+    // If PGlite fails to open (stale files), wipe and retry once more
+    console.warn('[hard-reset] PGlite init failed, wiping and retrying:', (err as Error).message);
+    await closePglite();
+    await new Promise((r) => setTimeout(r, 1000));
+    if (fs.existsSync(PG_DATA_DIR)) {
+      fs.rmSync(PG_DATA_DIR, { recursive: true, force: true });
+    }
+    pg = await getPglite();
+    await initSchema();
+  }
 
   const msgCount = await pg.query('SELECT count(*) as cnt FROM message');
   console.log(`[hard-reset] Fresh DB message count: ${(msgCount.rows[0] as any).cnt}`);

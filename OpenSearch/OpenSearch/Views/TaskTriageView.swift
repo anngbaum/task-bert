@@ -188,17 +188,19 @@ struct TaskTriageView: View {
                 }
             }
 
-            // Done button
-            Button(action: onComplete) {
-                Text("Done")
-                    .fontWeight(.medium)
-                    .frame(maxWidth: .infinity)
+            // Done button (hidden while loading)
+            if !isLoading {
+                Button(action: onComplete) {
+                    Text("Done")
+                        .fontWeight(.medium)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .padding(.top, 8)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {

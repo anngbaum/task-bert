@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var statusMessage: String? = nil
     @State private var showDebugLogs: Bool = false
     @State private var showHardResetConfirm: Bool = false
+    @State private var showSoftResetConfirm: Bool = false
 
     private var availableModels: [SearchService.ModelOption] {
         models.filter { $0.available }
@@ -91,6 +92,16 @@ struct SettingsView: View {
 
                             Spacer()
 
+                            Button {
+                                showSoftResetConfirm = true
+                            } label: {
+                                Label("Refresh Tasks & Events", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.orange)
+                            .font(.subheadline)
+                            .disabled(viewModel.isSyncing)
+
                             Button(role: .destructive) {
                                 showHardResetConfirm = true
                             } label: {
@@ -129,6 +140,17 @@ struct SettingsView: View {
         .task { await loadSettings() }
         .sheet(isPresented: $showDebugLogs) {
             DebugLogsView(viewModel: viewModel)
+        }
+        .alert("Refresh Tasks & Events", isPresented: $showSoftResetConfirm) {
+            Button("Refresh", role: .destructive) {
+                Task {
+                    dismiss()
+                    await viewModel.softReset()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will clear all tasks, events, and conversation summaries, then re-analyze your recent messages. Your chat history will not be affected.")
         }
         .alert("Hard Reset", isPresented: $showHardResetConfirm) {
             Button("Reset", role: .destructive) {

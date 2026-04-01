@@ -159,6 +159,17 @@ actor SearchService {
         return try decoder.decode(SyncResponse.self, from: data)
     }
 
+    func softReset() async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/soft-reset"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 600
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+    }
+
     struct ImportOlderStarted: Decodable {
         let started: Bool
         let since: String

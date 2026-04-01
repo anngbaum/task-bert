@@ -194,7 +194,7 @@ struct EventCardView: View {
                             .foregroundStyle(.purple)
                     }
                 }
-                if let location = event.location {
+                if let location = event.location, !location.trimmingCharacters(in: .whitespaces).isEmpty {
                     Label(location, systemImage: "mappin")
                         .font(.caption2)
                         .foregroundStyle(.secondary)

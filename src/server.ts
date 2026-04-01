@@ -57,7 +57,7 @@ let initialSyncDone = false;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 
 // --- Sync progress tracking (shared module) ---
-import { getSyncProgress } from './progress.js';
+import { getSyncProgress, updateSyncProgress } from './progress.js';
 
 const MODEL_DEFAULTS: Record<string, string> = {
   actions: 'claude-sonnet-4-6',
@@ -692,6 +692,36 @@ const server = http.createServer(async (req, res) => {
               console.error('[import-older] Failed:', err);
             })
             .finally(() => { syncInProgress = false; });
+          break;
+        }
+        case '/api/soft-reset': {
+          if (syncInProgress) {
+            jsonResponse(res, { error: 'Sync already in progress' }, 409);
+            break;
+          }
+          syncInProgress = true;
+          jsonResponse(res, { started: true, mode: 'softReset' });
+          (async () => {
+            try {
+              const db = await getPglite();
+              console.log('[soft-reset] Clearing tasks, events, and chat metadata...');
+              updateSyncProgress('soft-reset', 'Clearing tasks and events...', 5);
+              db.exec(`DELETE FROM tasks`);
+              db.exec(`DELETE FROM key_events`);
+              db.exec(`DELETE FROM chat_metadata`);
+              db.exec(`DELETE FROM metadata_meta`);
+              console.log('[soft-reset] Re-generating metadata...');
+              updateSyncProgress('metadata', 'Re-generating metadata...', 20);
+              const llmConfig = getLLMConfig('summary');
+              await updateMetadata(llmConfig, { since: undefined, minMessages: 1 });
+              updateSyncProgress('done', 'Complete!', 100);
+              console.log('[soft-reset] Complete.');
+            } catch (err) {
+              console.error('[soft-reset] Failed:', err);
+            } finally {
+              syncInProgress = false;
+            }
+          })();
           break;
         }
         case '/api/sync': {

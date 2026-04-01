@@ -171,9 +171,12 @@ server.tool(
     const parts: string[] = [];
 
     if (data.key_events.length > 0) {
-      parts.push('## Upcoming Events\n' + data.key_events.map((e: any) =>
-        `- ${e.title}${e.date ? ` (${e.date})` : ''}${e.location ? ` at ${e.location}` : ''} — from chat with ${e.chat_name}`
-      ).join('\n'));
+      parts.push('## Upcoming Events\n' + data.key_events.map((e: any) => {
+        const loc = e.location?.trim() || null;
+        let line = `- ${e.title}${e.date ? ` (${e.date})` : ''} — from chat with ${e.chat_name}`;
+        if (loc) line += `\n  Location: ${loc}`;
+        return line;
+      }).join('\n'));
     }
 
     const todoTasks = data.tasks.filter((t: any) => t.bucket === 'todo');
