@@ -3,7 +3,39 @@ import EventKit
 
 struct EventsPanelView: View {
     @ObservedObject var viewModel: SearchViewModel
+    @State private var expandedSections: Set<String> = ["thisWeek", "upcoming"]
     @State private var showRemovedEvents = false
+
+    private var thisWeekEvents: [KeyEvent] {
+        let now = Date()
+        let weekFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
+        return viewModel.keyEvents
+            .filter { event in
+                guard let date = event.date else { return false }
+                return date >= Calendar.current.startOfDay(for: now) && date < weekFromNow
+            }
+            .sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
+    }
+
+    private var upcomingEvents: [KeyEvent] {
+        let weekFromNow = Calendar.current.date(byAdding: .day, value: 7, to: Date())!
+        return viewModel.keyEvents
+            .filter { event in
+                guard let date = event.date else { return true } // no date → upcoming
+                return date >= weekFromNow
+            }
+            .sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
+    }
+
+    private var pastEvents: [KeyEvent] {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        return viewModel.keyEvents
+            .filter { event in
+                guard let date = event.date else { return false }
+                return date < startOfToday
+            }
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
 
     var body: some View {
         Group {
@@ -31,9 +63,53 @@ struct EventsPanelView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(viewModel.keyEvents) { event in
-                            EventCardView(event: event, viewModel: viewModel)
+                    VStack(alignment: .leading, spacing: 12) {
+                        // This Week
+                        if !thisWeekEvents.isEmpty {
+                            CollapsibleSection(
+                                title: "This Week",
+                                icon: "calendar",
+                                color: .orange,
+                                count: thisWeekEvents.count,
+                                isExpanded: expandedSections.contains("thisWeek"),
+                                onToggle: { toggleSection("thisWeek") }
+                            ) {
+                                ForEach(thisWeekEvents) { event in
+                                    EventRowView(event: event, viewModel: viewModel)
+                                }
+                            }
+                        }
+
+                        // Upcoming
+                        if !upcomingEvents.isEmpty {
+                            CollapsibleSection(
+                                title: "Upcoming",
+                                icon: "calendar.badge.clock",
+                                color: .purple,
+                                count: upcomingEvents.count,
+                                isExpanded: expandedSections.contains("upcoming"),
+                                onToggle: { toggleSection("upcoming") }
+                            ) {
+                                ForEach(upcomingEvents) { event in
+                                    EventRowView(event: event, viewModel: viewModel)
+                                }
+                            }
+                        }
+
+                        // Past
+                        if !pastEvents.isEmpty {
+                            CollapsibleSection(
+                                title: "Past",
+                                icon: "clock.arrow.circlepath",
+                                color: .secondary,
+                                count: pastEvents.count,
+                                isExpanded: expandedSections.contains("past"),
+                                onToggle: { toggleSection("past") }
+                            ) {
+                                ForEach(pastEvents) { event in
+                                    EventRowView(event: event, viewModel: viewModel)
+                                }
+                            }
                         }
 
                         // Removed events toggle
@@ -73,6 +149,16 @@ struct EventsPanelView: View {
             Task {
                 await viewModel.loadActions()
                 await viewModel.loadCompletedActions()
+            }
+        }
+    }
+
+    private func toggleSection(_ key: String) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedSections.contains(key) {
+                expandedSections.remove(key)
+            } else {
+                expandedSections.insert(key)
             }
         }
     }

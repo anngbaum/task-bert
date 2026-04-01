@@ -3,14 +3,18 @@ import EventKit
 
 struct ActionsPanelView: View {
     @ObservedObject var viewModel: SearchViewModel
-    @State private var expandedSections: Set<String> = ["high", "low"]
+    @State private var expandedSections: Set<String> = ["todo", "upcoming", "waiting"]
 
-    private var highPriorityTasks: [TaskItem] {
-        viewModel.tasks.filter { $0.isHighPriority }
+    private var todoTasks: [TaskItem] {
+        viewModel.tasks.filter { $0.resolvedBucket == "todo" }
     }
 
-    private var lowPriorityTasks: [TaskItem] {
-        viewModel.tasks.filter { !$0.isHighPriority }
+    private var upcomingTasks: [TaskItem] {
+        viewModel.tasks.filter { $0.resolvedBucket == "upcoming" }
+    }
+
+    private var waitingTasks: [TaskItem] {
+        viewModel.tasks.filter { $0.resolvedBucket == "waiting" }
     }
 
     var body: some View {
@@ -41,54 +45,38 @@ struct ActionsPanelView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
-                            // High Priority Tasks
-                            if !highPriorityTasks.isEmpty {
-                                CollapsibleSection(
-                                    title: "High Priority",
-                                    icon: "exclamationmark.circle.fill",
-                                    color: .orange,
-                                    count: highPriorityTasks.count,
-                                    isExpanded: expandedSections.contains("high"),
-                                    onToggle: { toggleSection("high") }
-                                ) {
-                                    ForEach(highPriorityTasks) { task in
-                                        TaskRowView(
-                                            task: task,
-                                            accentColor: .orange,
-                                            onComplete: { await viewModel.completeTask(id: task.id) },
-                                            onTap: task.message_id.map { msgId in
-                                                { Task { await viewModel.openThread(for: msgId) } }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
+                            // To Do
+                            taskSection(
+                                bucket: "todo",
+                                title: "To Do",
+                                icon: "checklist",
+                                color: .orange,
+                                tasks: todoTasks,
+                                accentColor: { _ in .orange }
+                            )
 
-                            // Low Priority Tasks
-                            if !lowPriorityTasks.isEmpty {
-                                CollapsibleSection(
-                                    title: "Low Priority",
-                                    icon: "arrow.turn.up.right",
-                                    color: .blue,
-                                    count: lowPriorityTasks.count,
-                                    isExpanded: expandedSections.contains("low"),
-                                    onToggle: { toggleSection("low") }
-                                ) {
-                                    ForEach(lowPriorityTasks) { task in
-                                        TaskRowView(
-                                            task: task,
-                                            accentColor: .blue,
-                                            onComplete: { await viewModel.completeTask(id: task.id) },
-                                            onTap: task.message_id.map { msgId in
-                                                { Task { await viewModel.openThread(for: msgId) } }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
+                            // Upcoming
+                            taskSection(
+                                bucket: "upcoming",
+                                title: "Upcoming",
+                                icon: "calendar.badge.clock",
+                                color: .purple,
+                                tasks: upcomingTasks,
+                                accentColor: { _ in .purple }
+                            )
+
+                            // Waiting
+                            taskSection(
+                                bucket: "waiting",
+                                title: "Waiting",
+                                icon: "hourglass",
+                                color: .secondary,
+                                tasks: waitingTasks,
+                                accentColor: { _ in .secondary }
+                            )
 
                             // All caught up
-                            if viewModel.tasks.isEmpty {
+                            if todoTasks.isEmpty {
                                 Text("All caught up!")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -143,6 +131,28 @@ struct ActionsPanelView: View {
         }
     }
 
+    @ViewBuilder
+    private func taskSection(
+        bucket: String,
+        title: String,
+        icon: String,
+        color: Color,
+        tasks: [TaskItem],
+        accentColor: @escaping (TaskItem) -> Color
+    ) -> some View {
+        DroppableSectionView(
+            bucket: bucket,
+            title: title,
+            icon: icon,
+            color: color,
+            tasks: tasks,
+            isExpanded: expandedSections.contains(bucket),
+            onToggle: { toggleSection(bucket) },
+            accentColor: accentColor,
+            viewModel: viewModel
+        )
+    }
+
     private func toggleSection(_ key: String) {
         withAnimation(.easeInOut(duration: 0.2)) {
             if expandedSections.contains(key) {
@@ -151,6 +161,119 @@ struct ActionsPanelView: View {
                 expandedSections.insert(key)
             }
         }
+    }
+}
+
+struct DroppableSectionView: View {
+    let bucket: String
+    let title: String
+    let icon: String
+    let color: Color
+    let tasks: [TaskItem]
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    let accentColor: (TaskItem) -> Color
+    @ObservedObject var viewModel: SearchViewModel
+    @State private var isTargeted = false
+    @State private var pendingMoveTaskId: Int? = nil
+    @State private var upcomingDate: Date = Date().addingTimeInterval(7 * 24 * 60 * 60)
+
+    var body: some View {
+        CollapsibleSection(
+            title: title,
+            icon: icon,
+            color: color,
+            count: tasks.count,
+            isExpanded: isExpanded || tasks.isEmpty,
+            onToggle: tasks.isEmpty ? {} : onToggle
+        ) {
+            ForEach(tasks) { task in
+                TaskRowView(
+                    task: task,
+                    accentColor: accentColor(task),
+                    onComplete: { await viewModel.completeTask(id: task.id) },
+                    onTap: task.message_id.map { msgId in
+                        { Task { await viewModel.openThread(for: msgId) } }
+                    },
+                    onTogglePriority: {
+                        await viewModel.toggleTaskPriority(id: task.id)
+                    }
+                )
+                .draggable("task:\(task.id)")
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isTargeted ? color.opacity(0.1) : Color.clear)
+        )
+        .dropDestination(for: String.self) { items, _ in
+            guard let item = items.first, item.hasPrefix("task:"),
+                  let taskId = Int(item.dropFirst(5)) else { return false }
+            if viewModel.tasks.first(where: { $0.id == taskId })?.resolvedBucket == bucket { return false }
+            if bucket == "upcoming" {
+                upcomingDate = Date().addingTimeInterval(7 * 24 * 60 * 60)
+                pendingMoveTaskId = taskId
+            } else {
+                Task { await viewModel.moveTask(id: taskId, toBucket: bucket) }
+            }
+            return true
+        } isTargeted: { targeted in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isTargeted = targeted
+            }
+        }
+        .sheet(item: $pendingMoveTaskId) { taskId in
+            UpcomingDatePickerSheet(
+                date: $upcomingDate,
+                taskTitle: viewModel.tasks.first(where: { $0.id == taskId })?.title ?? "Task",
+                onConfirm: {
+                    let date = upcomingDate
+                    pendingMoveTaskId = nil
+                    Task { await viewModel.moveTask(id: taskId, toBucket: "upcoming", date: date) }
+                },
+                onCancel: {
+                    pendingMoveTaskId = nil
+                }
+            )
+        }
+    }
+}
+
+// Make Int work with .sheet(item:)
+extension Int: @retroactive Identifiable {
+    public var id: Int { self }
+}
+
+struct UpcomingDatePickerSheet: View {
+    @Binding var date: Date
+    let taskTitle: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("When should this move to your to-do list?")
+                .font(.headline)
+
+            Text(taskTitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            DatePicker("", selection: $date, in: Date()..., displayedComponents: .date)
+                .labelsHidden()
+                .datePickerStyle(.graphical)
+                .frame(maxWidth: 300)
+
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.bordered)
+                Button("Confirm", action: onConfirm)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
     }
 }
 
@@ -201,10 +324,30 @@ struct TaskRowView: View {
     let accentColor: Color
     let onComplete: () async -> Void
     let onTap: (() -> Void)?
+    let onTogglePriority: (() async -> Void)?
     @State private var markedDone = false
 
+    private var resolvedAccent: Color {
+        task.isHighPriority ? accentColor : accentColor.opacity(0.5)
+    }
+
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
+            // Priority indicator
+            if let onTogglePriority {
+                Button {
+                    Task { await onTogglePriority() }
+                } label: {
+                    Text("!!")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(task.isHighPriority ? accentColor : .clear)
+                        .frame(width: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(task.isHighPriority ? "Set to low priority" : "Set to high priority")
+            }
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .font(.caption)
@@ -241,7 +384,7 @@ struct TaskRowView: View {
             } label: {
                 Image(systemName: markedDone ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20))
-                    .foregroundStyle(markedDone ? .green : accentColor)
+                    .foregroundStyle(markedDone ? .green : resolvedAccent)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
             }

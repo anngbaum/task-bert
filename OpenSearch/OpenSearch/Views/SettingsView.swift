@@ -6,7 +6,9 @@ struct SettingsView: View {
 
     @State private var anthropicKeyInput: String = ""
     @State private var openaiKeyInput: String = ""
-    @State private var selectedModel: String = ""
+    @State private var actionsModel: String = ""
+    @State private var summaryModel: String = ""
+    @State private var askModel: String = ""
     @State private var models: [SearchService.ModelOption] = []
     @State private var maskedAnthropicKey: String? = nil
     @State private var maskedOpenaiKey: String? = nil
@@ -29,85 +31,85 @@ struct SettingsView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                VStack(alignment: .leading, spacing: 16) {
-                    apiKeySection(
-                        title: "Anthropic API Key",
-                        placeholder: "sk-ant-...",
-                        input: $anthropicKeyInput,
-                        maskedKey: maskedAnthropicKey,
-                        helpText: "console.anthropic.com",
-                        onRemove: {
-                            Task { await removeKey(provider: "anthropic") }
-                        }
-                    )
-
-                    apiKeySection(
-                        title: "OpenAI API Key",
-                        placeholder: "sk-...",
-                        input: $openaiKeyInput,
-                        maskedKey: maskedOpenaiKey,
-                        helpText: "platform.openai.com",
-                        onRemove: {
-                            Task { await removeKey(provider: "openai") }
-                        }
-                    )
-
-                    Divider()
-
-                    modelPicker
-
-                    Divider()
-
-                    // Sync Reminders
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle(isOn: $viewModel.syncRemindersEnabled) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checklist")
-                                    .foregroundStyle(.blue)
-                                Text("Sync Reminders")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        apiKeySection(
+                            title: "Anthropic API Key",
+                            placeholder: "sk-ant-...",
+                            input: $anthropicKeyInput,
+                            maskedKey: maskedAnthropicKey,
+                            helpText: "console.anthropic.com",
+                            onRemove: {
+                                Task { await removeKey(provider: "anthropic") }
                             }
-                        }
-                        .toggleStyle(.switch)
+                        )
 
-                        Text("Export high and low priority tasks to Apple Reminders")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        apiKeySection(
+                            title: "OpenAI API Key",
+                            placeholder: "sk-...",
+                            input: $openaiKeyInput,
+                            maskedKey: maskedOpenaiKey,
+                            helpText: "platform.openai.com",
+                            onRemove: {
+                                Task { await removeKey(provider: "openai") }
+                            }
+                        )
+
+                        Divider()
+
+                        modelPicker
+
+                        Divider()
+
+                        // Sync Reminders
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle(isOn: $viewModel.syncRemindersEnabled) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checklist")
+                                        .foregroundStyle(.blue)
+                                    Text("Sync Reminders")
+                                }
+                            }
+                            .toggleStyle(.switch)
+
+                            Text("Export high and low priority tasks to Apple Reminders")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        Divider()
+
+                        HStack {
+                            Button {
+                                showDebugLogs = true
+                            } label: {
+                                Label("Server Logs", systemImage: "terminal")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+
+                            Spacer()
+
+                            Button(role: .destructive) {
+                                showHardResetConfirm = true
+                            } label: {
+                                Label("Hard Reset", systemImage: "arrow.counterclockwise.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.red)
+                            .font(.subheadline)
+                            .disabled(viewModel.isSyncing)
+                        }
+
+                        if let status = statusMessage {
+                            Text(status)
+                                .font(.caption)
+                                .foregroundStyle(status.contains("Error") ? .red : .green)
+                        }
                     }
-
-                    Divider()
-
-                    HStack {
-                        Button {
-                            showDebugLogs = true
-                        } label: {
-                            Label("Server Logs", systemImage: "terminal")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .font(.subheadline)
-
-                        Spacer()
-
-                        Button(role: .destructive) {
-                            showHardResetConfirm = true
-                        } label: {
-                            Label("Hard Reset", systemImage: "arrow.counterclockwise.circle")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.red)
-                        .font(.subheadline)
-                        .disabled(viewModel.isSyncing)
-                    }
-                }
-
-                if let status = statusMessage {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(status.contains("Error") ? .red : .green)
                 }
             }
-
-            Spacer()
 
             HStack {
                 Spacer()
@@ -123,7 +125,7 @@ struct SettingsView: View {
             }
         }
         .padding(20)
-        .frame(width: 460, height: 520)
+        .frame(width: 480, height: 640)
         .task { await loadSettings() }
         .sheet(isPresented: $showDebugLogs) {
             DebugLogsView(viewModel: viewModel)
@@ -181,22 +183,51 @@ struct SettingsView: View {
     }
 
     private var modelPicker: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Model")
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Models")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             if availableModels.isEmpty {
-                Text("Enter at least one API key to select a model.")
+                Text("Enter at least one API key to select models.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             } else {
-                Picker("", selection: $selectedModel) {
-                    ForEach(availableModels) { model in
-                        Text(model.name).tag(model.id)
+                HStack {
+                    Text("Tasks & Events")
+                        .font(.caption)
+                        .frame(width: 120, alignment: .leading)
+                    Picker("", selection: $actionsModel) {
+                        ForEach(availableModels) { model in
+                            Text(model.name).tag(model.id)
+                        }
                     }
+                    .labelsHidden()
                 }
-                .labelsHidden()
+
+                HStack {
+                    Text("Summaries")
+                        .font(.caption)
+                        .frame(width: 120, alignment: .leading)
+                    Picker("", selection: $summaryModel) {
+                        ForEach(availableModels) { model in
+                            Text(model.name).tag(model.id)
+                        }
+                    }
+                    .labelsHidden()
+                }
+
+                HStack {
+                    Text("Ask Mode")
+                        .font(.caption)
+                        .frame(width: 120, alignment: .leading)
+                    Picker("", selection: $askModel) {
+                        ForEach(availableModels) { model in
+                            Text(model.name).tag(model.id)
+                        }
+                    }
+                    .labelsHidden()
+                }
             }
         }
     }
@@ -211,7 +242,12 @@ struct SettingsView: View {
             maskedAnthropicKey = settings.anthropicApiKey
             maskedOpenaiKey = settings.openaiApiKey
             models = fetchedModels
-            selectedModel = settings.selectedModel ?? fetchedModels.first(where: { $0.available })?.id ?? ""
+            let defaultSonnet = fetchedModels.first(where: { $0.available && $0.id.contains("sonnet") })?.id
+            let defaultHaiku = fetchedModels.first(where: { $0.available && $0.id.contains("haiku") })?.id
+            let defaultModel = fetchedModels.first(where: { $0.available })?.id ?? ""
+            actionsModel = settings.actionsModel ?? settings.selectedModel ?? defaultSonnet ?? defaultModel
+            summaryModel = settings.summaryModel ?? defaultHaiku ?? defaultModel
+            askModel = settings.askModel ?? settings.selectedModel ?? defaultHaiku ?? defaultModel
         } catch {
             statusMessage = "Error loading settings"
         }
@@ -227,12 +263,14 @@ struct SettingsView: View {
             } else {
                 maskedOpenaiKey = nil
             }
-            // Refresh models availability
+            // Refresh models availability and reset any that lost their key
             if let fetchedModels = try? await viewModel.fetchModels() {
                 models = fetchedModels
-                if !availableModels.contains(where: { $0.id == selectedModel }) {
-                    selectedModel = availableModels.first?.id ?? ""
-                }
+                let available = fetchedModels.filter { $0.available }
+                let fallback = available.first?.id ?? ""
+                if !available.contains(where: { $0.id == actionsModel }) { actionsModel = fallback }
+                if !available.contains(where: { $0.id == summaryModel }) { summaryModel = fallback }
+                if !available.contains(where: { $0.id == askModel }) { askModel = fallback }
             }
             viewModel.hasApiKey = (maskedAnthropicKey != nil || maskedOpenaiKey != nil)
             statusMessage = "\(provider == "anthropic" ? "Anthropic" : "OpenAI") key removed"
@@ -253,8 +291,14 @@ struct SettingsView: View {
         if !openaiKeyInput.isEmpty {
             updates["openaiApiKey"] = openaiKeyInput
         }
-        if !selectedModel.isEmpty {
-            updates["selectedModel"] = selectedModel
+        if !actionsModel.isEmpty {
+            updates["actionsModel"] = actionsModel
+        }
+        if !summaryModel.isEmpty {
+            updates["summaryModel"] = summaryModel
+        }
+        if !askModel.isEmpty {
+            updates["askModel"] = askModel
         }
 
         guard !updates.isEmpty else {
@@ -276,12 +320,14 @@ struct SettingsView: View {
                 openaiKeyInput = ""
             }
 
-            // Refresh models availability
+            // Refresh models availability and reset any that lost their key
             if let fetchedModels = try? await viewModel.fetchModels() {
                 models = fetchedModels
-                if !availableModels.contains(where: { $0.id == selectedModel }) {
-                    selectedModel = availableModels.first?.id ?? ""
-                }
+                let available = fetchedModels.filter { $0.available }
+                let fallback = available.first?.id ?? ""
+                if !available.contains(where: { $0.id == actionsModel }) { actionsModel = fallback }
+                if !available.contains(where: { $0.id == summaryModel }) { summaryModel = fallback }
+                if !available.contains(where: { $0.id == askModel }) { askModel = fallback }
             }
 
             viewModel.hasApiKey = (maskedAnthropicKey != nil || maskedOpenaiKey != nil)

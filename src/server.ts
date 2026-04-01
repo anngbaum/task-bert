@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { getPglite, closePglite, initSchema, verifyDatabase, wipePgliteData } from './db/pglite-client.js';
+import { openSqlite } from './db/sqlite-reader.js';
 import { DATA_DIR } from './config.js';
 import { searchFTS } from './search/fts.js';
 import { searchVector } from './search/vector.js';
@@ -58,8 +59,17 @@ let syncTimer: ReturnType<typeof setInterval> | null = null;
 // --- Sync progress tracking (shared module) ---
 import { getSyncProgress } from './progress.js';
 
-function getLLMConfig() {
-  let model = settings.selectedModel ?? 'claude-haiku-4-5-20251001';
+const MODEL_DEFAULTS: Record<string, string> = {
+  actions: 'claude-sonnet-4-6',
+  summary: 'claude-haiku-4-5-20251001',
+  ask: 'claude-haiku-4-5-20251001',
+};
+
+function getLLMConfig(purpose: 'actions' | 'summary' | 'ask' = 'summary') {
+  const modelSetting = purpose === 'actions' ? settings.actionsModel
+    : purpose === 'ask' ? settings.askModel
+    : settings.summaryModel;
+  let model = modelSetting ?? settings.selectedModel ?? MODEL_DEFAULTS[purpose];
 
   // Make sure the selected model's provider actually has a key configured
   const provider = model.startsWith('gpt') ? 'openai' : 'anthropic';
@@ -67,7 +77,7 @@ function getLLMConfig() {
   if (!hasKey) {
     // Fall back to a model whose provider has a key
     if (settings.anthropicApiKey) {
-      model = 'claude-haiku-4-5-20251001';
+      model = MODEL_DEFAULTS[purpose];
     } else if (settings.openaiApiKey) {
       model = 'gpt-4o-mini';
     }
@@ -75,6 +85,7 @@ function getLLMConfig() {
 
   return {
     model,
+    actionsModel: settings.actionsModel,
     anthropicApiKey: settings.anthropicApiKey,
     openaiApiKey: settings.openaiApiKey,
   };
@@ -89,7 +100,7 @@ async function runSync(mode: 'hardReset' | 'pullLatest' | 'resync' = 'pullLatest
   try {
     const result = await unifiedSync({
       mode,
-      llmConfig: getLLMConfig(),
+      llmConfig: getLLMConfig('summary'),
     });
     console.log(`[scheduler] Sync done (${mode}): ${result.newMessageCount} new messages across ${result.affectedChatIds.length} chats.`);
     initialSyncDone = true;
@@ -110,7 +121,10 @@ const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
 interface AppSettings {
   anthropicApiKey?: string;
   openaiApiKey?: string;
-  selectedModel?: string;
+  selectedModel?: string; // legacy — migrated to per-feature models
+  actionsModel?: string;   // tasks & events extraction (default: sonnet)
+  summaryModel?: string;   // conversation summaries (default: haiku)
+  askModel?: string;       // agent/ask mode (default: haiku)
 }
 
 function loadSettings(): AppSettings {
@@ -382,23 +396,19 @@ async function handlePutSettings(
   if (update.openaiApiKey !== undefined) {
     settings.openaiApiKey = update.openaiApiKey || undefined;
   }
+  // Legacy single model
   if (update.selectedModel !== undefined) {
     settings.selectedModel = update.selectedModel || undefined;
   }
-
-  // If the selected model's provider no longer has a key, reset to the first available model
-  if (settings.selectedModel) {
-    const provider = settings.selectedModel.startsWith('gpt') ? 'openai' : 'anthropic';
-    const hasKey = provider === 'openai' ? !!settings.openaiApiKey : !!settings.anthropicApiKey;
-    if (!hasKey) {
-      const fallback = AVAILABLE_MODELS.find((m) =>
-        m.provider === 'anthropic' ? !!settings.anthropicApiKey : !!settings.openaiApiKey
-      );
-      if (fallback) {
-        console.log(`[settings] Model "${settings.selectedModel}" no longer has a key, switching to "${fallback.id}"`);
-        settings.selectedModel = fallback.id;
-      }
-    }
+  // Per-feature models
+  if (update.actionsModel !== undefined) {
+    settings.actionsModel = update.actionsModel || undefined;
+  }
+  if (update.summaryModel !== undefined) {
+    settings.summaryModel = update.summaryModel || undefined;
+  }
+  if (update.askModel !== undefined) {
+    settings.askModel = update.askModel || undefined;
   }
 
   saveSettings(settings);
@@ -442,7 +452,7 @@ const server = http.createServer(async (req, res) => {
             break;
           }
           try {
-            const llmConfig = getLLMConfig();
+            const llmConfig = getLLMConfig('summary');
             // Pull new messages for this chat, embed, and refresh metadata
             const { newMessages } = await syncSingleConversation(chatId, llmConfig);
             // Return the updated summary
@@ -457,7 +467,7 @@ const server = http.createServer(async (req, res) => {
         }
         case '/api/update-metadata': {
           try {
-            const llmConfig = getLLMConfig();
+            const llmConfig = getLLMConfig('summary');
             const sinceParam = params.get('since');
             const since = sinceParam ? new Date(sinceParam) : undefined;
             const minMessages = parseInt(params.get('minMessages') || '1', 10);
@@ -470,7 +480,7 @@ const server = http.createServer(async (req, res) => {
         }
         case '/api/tasks/create': {
           const body = await readBody(req);
-          let parsed: { title?: string; date?: string; priority?: string; chat_id?: number; key_event_id?: number };
+          let parsed: { title?: string; date?: string; priority?: string; type?: string; trigger_hint?: string; chat_id?: number; key_event_id?: number };
           try {
             parsed = JSON.parse(body);
           } catch {
@@ -484,9 +494,10 @@ const server = http.createServer(async (req, res) => {
           try {
             const db = await getPglite();
             const priority = parsed.priority === 'high' ? 'high' : 'low';
+            const type = parsed.type === 'waiting' ? 'waiting' : 'action';
             const result = await db.query(
-              `INSERT INTO tasks (chat_id, title, date, priority, key_event_id) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-              [parsed.chat_id ?? 0, parsed.title, parsed.date ?? null, priority, parsed.key_event_id ?? null]
+              `INSERT INTO tasks (chat_id, title, date, priority, type, trigger_hint, key_event_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+              [parsed.chat_id ?? 0, parsed.title, parsed.date ?? null, priority, type, parsed.trigger_hint ?? null, parsed.key_event_id ?? null]
             );
             jsonResponse(res, { ok: true, task: result.rows[0] });
           } catch (err) {
@@ -508,6 +519,63 @@ const server = http.createServer(async (req, res) => {
           try {
             const db = await getPglite();
             await db.query('UPDATE tasks SET completed = true WHERE id = $1', [actionId]);
+            jsonResponse(res, { ok: true });
+          } catch (err) {
+            errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
+        case '/api/tasks/move': {
+          const body = await readBody(req);
+          let parsed: { id?: number; bucket?: string; date?: string | null };
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            errorResponse(res, 'Invalid JSON body');
+            break;
+          }
+          if (!parsed.id || !parsed.bucket) {
+            errorResponse(res, 'Missing required fields: id, bucket');
+            break;
+          }
+          try {
+            const db = await getPglite();
+            if (parsed.bucket === 'todo') {
+              await db.query('UPDATE tasks SET type = $1, date = NULL WHERE id = $2', ['action', parsed.id]);
+            } else if (parsed.bucket === 'upcoming') {
+              const date = parsed.date || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+              await db.query('UPDATE tasks SET type = $1, date = $2 WHERE id = $3', ['action', date, parsed.id]);
+            } else if (parsed.bucket === 'waiting') {
+              await db.query('UPDATE tasks SET type = $1 WHERE id = $2', ['waiting', parsed.id]);
+            } else {
+              errorResponse(res, 'Invalid bucket. Must be: todo, upcoming, waiting');
+              break;
+            }
+            jsonResponse(res, { ok: true });
+          } catch (err) {
+            errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
+        case '/api/tasks/set-priority': {
+          const idStr = params.get('id');
+          const priority = params.get('priority');
+          if (!idStr) {
+            errorResponse(res, 'Missing required parameter: id');
+            break;
+          }
+          const id = parseInt(idStr, 10);
+          if (isNaN(id)) {
+            errorResponse(res, 'id must be a number');
+            break;
+          }
+          if (priority !== 'high' && priority !== 'low') {
+            errorResponse(res, 'priority must be "high" or "low"');
+            break;
+          }
+          try {
+            const db = await getPglite();
+            await db.query('UPDATE tasks SET priority = $1 WHERE id = $2', [priority, id]);
             jsonResponse(res, { ok: true });
           } catch (err) {
             errorResponse(res, (err as Error).message, 500);
@@ -569,7 +637,7 @@ const server = http.createServer(async (req, res) => {
             break;
           }
           try {
-            const llmConfig = getLLMConfig();
+            const llmConfig = getLLMConfig('ask');
             console.log(`[agent] Received query: "${parsed.query}"`);
 
             // Stream newline-delimited JSON: progress events followed by final result
@@ -639,7 +707,7 @@ const server = http.createServer(async (req, res) => {
             initialSyncDone = false;
             syncInProgress = true;
             jsonResponse(res, { started: true, mode: 'hardReset' });
-            unifiedSync({ mode: 'hardReset', metadataDays: days, llmConfig: getLLMConfig() })
+            unifiedSync({ mode: 'hardReset', metadataDays: days, llmConfig: getLLMConfig('summary') })
               .then(() => {
                 console.log('[sync] Hard reset complete.');
                 initialSyncDone = true;
@@ -653,7 +721,7 @@ const server = http.createServer(async (req, res) => {
             // UI resync button: pull latest + metadata for all conversations in window
             syncInProgress = true;
             try {
-              const result = await unifiedSync({ mode: 'resync', metadataDays: days, llmConfig: getLLMConfig() });
+              const result = await unifiedSync({ mode: 'resync', metadataDays: days, llmConfig: getLLMConfig('summary') });
               jsonResponse(res, result);
             } catch (err) {
               errorResponse(res, (err as Error).message, 500);
@@ -731,7 +799,8 @@ const server = http.createServer(async (req, res) => {
                   END as chat_name,
                   (SELECT MAX(m.date) FROM message m
                    JOIN chat_message_join cmj ON cmj.message_id = m.id
-                   WHERE cmj.chat_id = cm.chat_id) as latest_message_date
+                   WHERE cmj.chat_id = cm.chat_id) as latest_message_date,
+                  (SELECT COUNT(*) FROM chat_handle_join _chj WHERE _chj.chat_id = c.id) as participant_count
            FROM chat_metadata cm
            LEFT JOIN chat c ON c.id = cm.chat_id
            ORDER BY latest_message_date DESC NULLS LAST`
@@ -774,11 +843,21 @@ const server = http.createServer(async (req, res) => {
         );
 
         const tasksResult = await db.query(
-          `SELECT t.*, ${chatNameExpr} as chat_name
+          `SELECT t.*, ${chatNameExpr} as chat_name,
+             CASE
+               WHEN t.type = 'waiting' THEN 'waiting'
+               WHEN t.type = 'action' AND t.date IS NOT NULL AND t.date > NOW() THEN 'upcoming'
+               ELSE 'todo'
+             END as bucket
            FROM tasks t
            LEFT JOIN chat c ON c.id = t.chat_id
            ${showCompleted ? '' : 'WHERE t.completed = false'}
            ORDER BY
+             CASE
+               WHEN t.type = 'waiting' THEN 2
+               WHEN t.type = 'action' AND t.date IS NOT NULL AND t.date > NOW() THEN 1
+               ELSE 0
+             END,
              CASE t.priority WHEN 'high' THEN 0 ELSE 1 END,
              t.date ASC NULLS LAST,
              t.created_at DESC`
@@ -794,6 +873,73 @@ const server = http.createServer(async (req, res) => {
         const limit = parseInt(params.get('limit') || '200', 10);
         const logs = getRecentLogs(limit);
         jsonResponse(res, { logs });
+        break;
+      }
+      case '/api/chat-leaderboard': {
+        const chatIdStr = params.get('chatId');
+        if (!chatIdStr) {
+          errorResponse(res, 'Missing required parameter: chatId');
+          break;
+        }
+        const chatId = parseInt(chatIdStr, 10);
+        if (isNaN(chatId)) {
+          errorResponse(res, 'chatId must be a number');
+          break;
+        }
+        try {
+          // Query the full SQLite chat.db for complete history (PGlite only has recent synced data)
+          const sqlite = openSqlite();
+
+          // SQLite handle table has 'id' (phone/email) but no display_name.
+          // Get display names from PGlite (populated from address book), fall back to identifier.
+          const pg = await getPglite();
+          const pgHandles = await pg.query(
+            `SELECT h.id as handle_id, COALESCE(h.display_name, h.identifier) as name
+             FROM chat_handle_join chj
+             JOIN handle h ON chj.handle_id = h.id
+             WHERE chj.chat_id = $1
+             ORDER BY name`,
+            [chatId]
+          );
+          const participants = pgHandles.rows as { handle_id: number; name: string }[];
+
+          // associated_message_guid format: "p:<part>/<original_guid>"
+          // Use substr + instr to extract the original guid after "/"
+          const reactions = sqlite.prepare(
+            `SELECT
+               orig.is_from_me as orig_is_from_me,
+               orig.handle_id as orig_handle_id,
+               r.associated_message_type as reaction_type,
+               r.associated_message_emoji as emoji,
+               COUNT(*) as cnt
+             FROM message r
+             JOIN message orig ON orig.guid = substr(r.associated_message_guid, instr(r.associated_message_guid, '/') + 1)
+             JOIN chat_message_join cmj ON cmj.message_id = orig.ROWID
+             WHERE cmj.chat_id = ?
+               AND r.associated_message_type BETWEEN 2000 AND 2006
+             GROUP BY orig.is_from_me, orig.handle_id, r.associated_message_type, r.associated_message_emoji`
+          ).all(chatId) as { orig_is_from_me: number; orig_handle_id: number; reaction_type: number; emoji: string | null; cnt: number }[];
+
+          // Message counts per participant (excluding reactions/edits)
+          const messageCounts = sqlite.prepare(
+            `SELECT m.is_from_me, m.handle_id, COUNT(*) as cnt
+             FROM message m
+             JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+             WHERE cmj.chat_id = ?
+               AND m.associated_message_type = 0
+             GROUP BY m.is_from_me, m.handle_id`
+          ).all(chatId) as { is_from_me: number; handle_id: number; cnt: number }[];
+
+          sqlite.close();
+
+          jsonResponse(res, {
+            participants,
+            reactions: reactions.map(r => ({ ...r, orig_is_from_me: !!r.orig_is_from_me })),
+            message_counts: messageCounts.map(m => ({ ...m, is_from_me: !!m.is_from_me })),
+          });
+        } catch (err) {
+          errorResponse(res, (err as Error).message, 500);
+        }
         break;
       }
       case '/api/data-range': {

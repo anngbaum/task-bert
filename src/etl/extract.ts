@@ -45,7 +45,8 @@ export function* extractMessagesBatched(
       .prepare(
         `SELECT ROWID as id, guid, text, attributedBody, is_from_me, date,
                 date_read, date_delivered, handle_id, service,
-                associated_message_type, thread_originator_guid,
+                associated_message_type, associated_message_guid,
+                associated_message_emoji, thread_originator_guid,
                 balloon_bundle_id,
                 CASE WHEN cache_has_attachments = 1 THEN 1 ELSE 0 END as has_attachments
          FROM message

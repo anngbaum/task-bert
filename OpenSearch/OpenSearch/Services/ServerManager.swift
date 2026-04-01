@@ -128,7 +128,7 @@ final class ServerManager: ObservableObject {
 
         let proc = Process()
         proc.executableURL = nodeURL
-        proc.arguments = [scriptPath]
+        proc.arguments = ["--max-old-space-size=512", scriptPath]
         proc.currentDirectoryURL = serverBundleURL
         proc.environment = ProcessInfo.processInfo.environment.merging([
             "DATA_DIR": dataDirectoryURL.path,

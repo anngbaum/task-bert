@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Task Bert — Never miss a message again</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #666;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --card-bg: #fff;
+      --card-border: #e5e7eb;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.6;
+    }
+
+    header {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    header .logo {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    header .logo span {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .hero {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 3rem;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: 3rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin-bottom: 1.25rem;
+    }
+
+    .hero p {
+      font-size: 1.25rem;
+      color: var(--muted);
+      max-width: 550px;
+      margin: 0 auto 2.5rem;
+    }
+
+    .download-btn {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      font-size: 1.25rem;
+      font-weight: 600;
+      padding: 1rem 3rem;
+      border-radius: 12px;
+      text-decoration: none;
+      transition: background 0.15s, transform 0.15s;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+    }
+
+    .download-btn:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
+    }
+
+    .download-btn:active {
+      transform: translateY(0);
+    }
+
+    .download-note {
+      margin-top: 0.75rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .features {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+
+    .feature {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .feature h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+    }
+
+    .feature p {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .how-it-works {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+
+    .how-it-works h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .steps {
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .step {
+      flex: 1;
+      text-align: center;
+    }
+
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .step h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .step p {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .privacy {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+      text-align: center;
+    }
+
+    .privacy h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .privacy p {
+      font-size: 1rem;
+      color: var(--muted);
+      max-width: 550px;
+      margin: 0 auto;
+    }
+
+    .faq {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+    }
+
+    .faq h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .faq-item {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .faq-item h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+    }
+
+    .faq-item p {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    footer {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+      border-top: 1px solid var(--card-border);
+    }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 2rem; }
+      .hero p { font-size: 1.05rem; }
+      .features { grid-template-columns: 1fr; }
+      .steps { flex-direction: column; gap: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Task <span>Bert</span></div>
+</header>
+
+<section class="hero">
+  <h1>Your texts, organized</h1>
+  <p>Bert turns your iMessages into a clear, organized action list — so you never miss a reply, appointment, or important detail again.</p>
+  <a href="#" class="download-btn">Download Bert for Mac</a>
+  <p class="download-note">Requires macOS 14+ &middot; Free</p>
+</section>
+
+<section class="features">
+  <div class="feature">
+    <h3>Powerful search</h3>
+    <p>Full-text, semantic, and hybrid search across your entire message history. Find anything instantly.</p>
+  </div>
+  <div class="feature">
+    <h3>Action items</h3>
+    <p>Automatically extracts unanswered questions, commitments, and plans from your recent conversations.</p>
+  </div>
+  <div class="feature">
+    <h3>Conversation summaries</h3>
+    <p>AI-generated summaries of your conversations so you can quickly catch up on what matters.</p>
+  </div>
+  <div class="feature">
+    <h3>Smart filters</h3>
+    <p>Filter by contact, date range, group chat, or direction. Typeahead makes it fast.</p>
+  </div>
+  <div class="feature">
+    <h3>Thread view</h3>
+    <p>See the full context around any search result — jump straight into the conversation.</p>
+  </div>
+  <div class="feature">
+    <h3>100% local</h3>
+    <p>Everything runs on your Mac. Your messages never leave your computer.</p>
+  </div>
+</section>
+
+<section class="how-it-works">
+  <h2>How it works</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-number">1</div>
+      <h4>Install</h4>
+      <p>Download Bert and move it to Applications. Grant Full Disk Access so it can read your messages.</p>
+    </div>
+    <div class="step">
+      <div class="step-number">2</div>
+      <h4>Sync</h4>
+      <p>Add your API key and hit Sync. Bert indexes your messages locally with full-text and vector search.</p>
+    </div>
+    <div class="step">
+      <div class="step-number">3</div>
+      <h4>Stay on top</h4>
+      <p>Search your history, review action items, and never let an important message slip through the cracks.</p>
+    </div>
+  </div>
+</section>
+
+<section class="privacy">
+  <h2>Private by design</h2>
+  <p>Bert runs entirely on your Mac. Your messages are indexed locally in an embedded database — nothing is uploaded, stored remotely, or shared. You bring your own API key for AI features.</p>
+</section>
+
+<section class="faq">
+  <h2>Common questions</h2>
+
+  <div class="faq-item">
+    <h3>Can Bert send texts on my behalf?</h3>
+    <p>No. Bert can't send, delete, or modify any of your messages. That's your job. Bert is read-only — it just helps you stay organized and gives you a nudge when something needs your attention.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>Can Bert leak my messages outside of the app?</h3>
+    <p>Bert only connects to two services: the Claude API (Anthropic) and the OpenAI API — and only when you use AI features like summaries and action items. These calls use your own API key and are limited to summarizing and finding messages. Bert cannot access any other websites, services, or third-party tools. Your messages stay between your Mac and the AI provider you choose.</p>
+  </div>
+
+  <div class="faq-item">
+    <h3>What about the MCP server?</h3>
+    <p>Bert includes an MCP server that lets you connect it to Claude Code or other MCP-compatible tools. If you use this, be aware that the connected service will be able to query your messages through Bert — just as it can already access anything else on your disk. This isn't unique to Bert: any tool with Full Disk Access (or any MCP client you grant access to) can read your messages. Use the same caution you would with any provider that has access to your machine.</p>
+  </div>
+</section>
+
+<footer>
+  &copy; 2026 Task Bert
+</footer>
+
+</body>
+</html>

@@ -96,6 +96,7 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<Loa
     const columns = [
       'id', 'guid', 'text', 'is_from_me', 'date', 'date_read', 'date_delivered',
       'handle_id', 'service', 'associated_message_type',
+      'associated_message_guid', 'associated_message_emoji',
       'thread_originator_guid', 'balloon_bundle_id', 'has_attachments',
     ];
 
@@ -110,6 +111,8 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<Loa
       m.handle_id,
       m.service,
       m.associated_message_type,
+      m.associated_message_guid,
+      m.associated_message_emoji,
       m.thread_originator_guid,
       m.balloon_bundle_id,
       m.has_attachments,
@@ -127,8 +130,9 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<Loa
           await db.query(
             `INSERT INTO message (id, guid, text, is_from_me, date, date_read, date_delivered,
                                   handle_id, service, associated_message_type,
+                                  associated_message_guid, associated_message_emoji,
                                   thread_originator_guid, balloon_bundle_id, has_attachments)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (id) DO UPDATE SET text = EXCLUDED.text WHERE message.text IS NULL AND EXCLUDED.text IS NOT NULL`,
             [
               m.id, m.guid, m.text, m.is_from_me,
@@ -136,6 +140,7 @@ export async function loadMessages(db: PGlite, messages: Message[]): Promise<Loa
               m.date_read?.toISOString() ?? null,
               m.date_delivered?.toISOString() ?? null,
               m.handle_id, m.service, m.associated_message_type,
+              m.associated_message_guid, m.associated_message_emoji,
               m.thread_originator_guid, m.balloon_bundle_id, m.has_attachments,
             ]
           );

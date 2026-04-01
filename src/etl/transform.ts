@@ -96,6 +96,8 @@ export function transformMessage(raw: RawMessage): Message {
     handle_id: raw.handle_id,
     service: raw.service,
     associated_message_type: raw.associated_message_type,
+    associated_message_guid: raw.associated_message_guid,
+    associated_message_emoji: raw.associated_message_emoji,
     thread_originator_guid: raw.thread_originator_guid,
     balloon_bundle_id: raw.balloon_bundle_id,
     has_attachments: raw.has_attachments === 1,

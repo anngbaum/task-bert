@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case actions = "Actions Needed"
+    case actions = "Tasks"
     case events = "Events"
     case conversations = "Recent Conversations"
     case search = "Search Messages"
@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var selectedTab: AppTab = .actions
     @State private var showSettings: Bool = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
+    @AppStorage("hasCompletedTaskTriage") private var hasCompletedTaskTriage: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +35,10 @@ struct ContentView: View {
                     if viewModel.hasApiKey {
                         selectedTab = .actions
                     }
+                }
+            } else if !hasCompletedTaskTriage && viewModel.hasApiKey {
+                TaskTriageView(viewModel: viewModel) {
+                    hasCompletedTaskTriage = true
                 }
             } else {
                 ZStack {
@@ -109,6 +114,15 @@ struct ContentView: View {
                     if viewModel.threadAnchorId != nil {
                         ThreadView(viewModel: viewModel)
                     }
+
+                    // Leaderboard — overlays when active
+                    if viewModel.leaderboardChatId != nil {
+                        LeaderboardView(
+                            viewModel: viewModel,
+                            chatName: viewModel.chatMetadata.first(where: { $0.chat_id == viewModel.leaderboardChatId })?.chat_name ?? "Group Chat"
+                        )
+                        .background(Color(nsColor: .windowBackgroundColor))
+                    }
                 }
             }
         }
@@ -121,10 +135,14 @@ struct ContentView: View {
                 selectedTab = .search
             }
         }
-        .onChange(of: viewModel.didCompleteHardReset) { reset in
-            if reset {
-                hasCompletedOnboarding = false
-                viewModel.didCompleteHardReset = false
+        .onChange(of: viewModel.didStartHardReset) { started in
+            if started {
+                showSettings = false
+                hasCompletedTaskTriage = false
+                if !viewModel.hasApiKey {
+                    hasCompletedOnboarding = false
+                }
+                viewModel.didStartHardReset = false
             }
         }
         .frame(minWidth: 600, minHeight: 400)

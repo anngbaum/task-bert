@@ -44,6 +44,12 @@ export async function initSchema(): Promise<void> {
     await db.exec('ALTER TABLE key_events ADD COLUMN IF NOT EXISTS removed BOOLEAN DEFAULT FALSE;');
     await db.exec('ALTER TABLE key_events ADD COLUMN IF NOT EXISTS location TEXT;');
     await db.exec('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reminder_id TEXT;');
+    await db.exec('ALTER TABLE message ADD COLUMN IF NOT EXISTS associated_message_guid TEXT;');
+    await db.exec('ALTER TABLE message ADD COLUMN IF NOT EXISTS associated_message_emoji TEXT;');
+    await db.exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'action';`);
+    await db.exec('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS trigger_hint TEXT;');
+    // Migration: drop activate_at if it exists (consolidated into date)
+    try { await db.exec('ALTER TABLE tasks DROP COLUMN IF EXISTS activate_at;'); } catch { /* ignore */ }
   } catch {
     // Columns may already exist
   }

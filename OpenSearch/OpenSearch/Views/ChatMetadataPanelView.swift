@@ -32,10 +32,14 @@ struct ChatMetadataPanelView: View {
                         ForEach(viewModel.chatMetadata) { meta in
                             ChatMetadataRowView(
                                 metadata: meta,
-                                isRefreshing: viewModel.refreshingMetadataChats.contains(meta.chat_id)
-                            ) {
-                                Task { await viewModel.refreshChatMetadata(chatId: meta.chat_id) }
-                            }
+                                isRefreshing: viewModel.refreshingMetadataChats.contains(meta.chat_id),
+                                onRefresh: {
+                                    Task { await viewModel.refreshChatMetadata(chatId: meta.chat_id) }
+                                },
+                                onLeaderboard: meta.isGroupChat ? {
+                                    Task { await viewModel.loadLeaderboard(chatId: meta.chat_id) }
+                                } : nil
+                            )
                         }
                     }
                     .padding(.horizontal, 12)
@@ -53,6 +57,7 @@ struct ChatMetadataRowView: View {
     let metadata: ChatMetadata
     let isRefreshing: Bool
     let onRefresh: () -> Void
+    let onLeaderboard: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -61,6 +66,22 @@ struct ChatMetadataRowView: View {
                     .font(.caption)
                     .fontWeight(.medium)
                     .lineLimit(1)
+
+                if metadata.isGroupChat {
+                    Button {
+                        onLeaderboard?()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chart.bar")
+                                .font(.caption2)
+                            Text("Leaderboard")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.purple)
+                    }
+                    .buttonStyle(.plain)
+                    .help("See reaction leaderboard")
+                }
 
                 Spacer()
 

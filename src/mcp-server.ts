@@ -159,7 +159,7 @@ server.tool(
 // --- Tool: get_actions ---
 server.tool(
   'get_actions',
-  `Get the user's pending tasks and upcoming events extracted from iMessage conversations. Tasks are things the user needs to do (respond to someone, send something, etc.). Events are upcoming plans (dinners, trips, birthdays, etc.).`,
+  `Get the user's pending tasks and upcoming events extracted from iMessage conversations. Tasks are grouped into three buckets: "To Do" (actionable now), "Upcoming" (future-dated, not yet actionable), and "Waiting" (ball in someone else's court). Events are upcoming plans (dinners, trips, birthdays, etc.).`,
   {
     include_completed: z.boolean().default(false).describe('Include completed/removed items'),
   },
@@ -176,9 +176,25 @@ server.tool(
       ).join('\n'));
     }
 
-    if (data.tasks.length > 0) {
-      parts.push('## Tasks\n' + data.tasks.map((t: any) =>
+    const todoTasks = data.tasks.filter((t: any) => t.bucket === 'todo');
+    const upcomingTasks = data.tasks.filter((t: any) => t.bucket === 'upcoming');
+    const waitingTasks = data.tasks.filter((t: any) => t.bucket === 'waiting');
+
+    if (todoTasks.length > 0) {
+      parts.push('## To Do\n' + todoTasks.map((t: any) =>
         `- [${t.priority}] ${t.title}${t.date ? ` (due ${t.date})` : ''} — from chat with ${t.chat_name}${t.completed ? ' ✓' : ''}`
+      ).join('\n'));
+    }
+
+    if (upcomingTasks.length > 0) {
+      parts.push('## Upcoming\n' + upcomingTasks.map((t: any) =>
+        `- [${t.priority}] ${t.title}${t.date ? ` (${t.date})` : ''} — from chat with ${t.chat_name}`
+      ).join('\n'));
+    }
+
+    if (waitingTasks.length > 0) {
+      parts.push('## Waiting\n' + waitingTasks.map((t: any) =>
+        `- ${t.title}${t.date ? ` (${t.date})` : ''} — from chat with ${t.chat_name}`
       ).join('\n'));
     }
 

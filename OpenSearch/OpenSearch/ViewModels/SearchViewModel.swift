@@ -88,8 +88,8 @@ final class SearchViewModel: ObservableObject {
     // API key state — controls whether LLM-powered tabs are available
     @Published var hasApiKey: Bool = false
 
-    // Set to true after a hard reset completes — ContentView observes this to reset onboarding
-    @Published var didCompleteHardReset: Bool = false
+    // Set to true when a hard reset starts — ContentView observes this to push to triage/loading
+    @Published var didStartHardReset: Bool = false
 
     // Sync Reminders setting (client-only, stored in UserDefaults)
     @Published var syncRemindersEnabled: Bool = UserDefaults.standard.bool(forKey: "syncRemindersEnabled") {
@@ -467,6 +467,9 @@ final class SearchViewModel: ObservableObject {
 
     @MainActor
     func hardReset() async {
+        // Signal ContentView to push to triage/loading immediately
+        didStartHardReset = true
+
         // Clear all state immediately so the UI reflects the reset
         isSyncing = true
         lastSyncMessage = "Resetting database..."
@@ -510,9 +513,6 @@ final class SearchViewModel: ObservableObject {
         }
 
         isSyncing = false
-
-        // Signal ContentView to show onboarding after reset is fully complete
-        didCompleteHardReset = true
     }
 
     // MARK: - Thread
@@ -598,6 +598,21 @@ final class SearchViewModel: ObservableObject {
     }
 
     @Published private(set) var refreshingMetadataChats: Set<Int> = []
+    @Published var leaderboardChatId: Int? = nil
+    @Published private(set) var leaderboardData: LeaderboardResponse? = nil
+    @Published private(set) var isLoadingLeaderboard: Bool = false
+
+    @MainActor
+    func loadLeaderboard(chatId: Int) async {
+        leaderboardChatId = chatId
+        isLoadingLeaderboard = true
+        do {
+            leaderboardData = try await service.fetchLeaderboard(chatId: chatId)
+        } catch {
+            leaderboardData = nil
+        }
+        isLoadingLeaderboard = false
+    }
 
     @MainActor
     func refreshChatMetadata(chatId: Int) async {
@@ -610,7 +625,8 @@ final class SearchViewModel: ObservableObject {
                     summary: result.summary,
                     last_updated: Date(),
                     chat_name: chatMetadata[idx].chat_name,
-                    latest_message_date: chatMetadata[idx].latest_message_date
+                    latest_message_date: chatMetadata[idx].latest_message_date,
+                    participant_count: chatMetadata[idx].participant_count
                 )
             }
         } catch {
@@ -669,6 +685,52 @@ final class SearchViewModel: ObservableObject {
         } catch {
             completedTasks = []
             removedEvents = []
+        }
+    }
+
+    @MainActor
+    func toggleTaskPriority(id: Int) async {
+        guard let idx = tasks.firstIndex(where: { $0.id == id }) else { return }
+        let oldPriority = tasks[idx].priority
+        let newPriority = oldPriority == "high" ? "low" : "high"
+        // Optimistic update
+        tasks[idx].priority = newPriority
+        do {
+            try await service.setTaskPriority(id: id, priority: newPriority)
+        } catch {
+            // Revert on failure
+            if let idx = tasks.firstIndex(where: { $0.id == id }) {
+                tasks[idx].priority = oldPriority
+            }
+        }
+    }
+
+    @MainActor
+    func moveTask(id: Int, toBucket bucket: String, date: Date? = nil) async {
+        guard let idx = tasks.firstIndex(where: { $0.id == id }) else { return }
+        let oldType = tasks[idx].type
+        let oldDate = tasks[idx].date
+        let oldBucket = tasks[idx].bucket
+        // Optimistic update
+        tasks[idx].bucket = bucket
+        if bucket == "todo" {
+            tasks[idx].type = "action"
+            tasks[idx].date = nil
+        } else if bucket == "upcoming" {
+            tasks[idx].type = "action"
+            tasks[idx].date = date
+        } else if bucket == "waiting" {
+            tasks[idx].type = "waiting"
+        }
+        do {
+            try await service.moveTask(id: id, bucket: bucket, date: date)
+        } catch {
+            // Revert on failure
+            if let idx = tasks.firstIndex(where: { $0.id == id }) {
+                tasks[idx].type = oldType
+                tasks[idx].date = oldDate
+                tasks[idx].bucket = oldBucket
+            }
         }
     }
 

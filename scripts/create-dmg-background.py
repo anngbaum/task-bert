@@ -70,9 +70,9 @@ let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
 NSGraphicsContext.current = nsCtx
 
 let boxPath = NSBezierPath(roundedRect: boxRect, xRadius: 10 * s, yRadius: 10 * s)
-NSColor(red: 0.95, green: 0.92, blue: 0.85, alpha: 1.0).setFill()
+NSColor(red: 0.92, green: 0.96, blue: 0.92, alpha: 1.0).setFill()
 boxPath.fill()
-NSColor(red: 0.85, green: 0.78, blue: 0.65, alpha: 1.0).setStroke()
+NSColor(red: 0.75, green: 0.85, blue: 0.75, alpha: 1.0).setStroke()
 boxPath.lineWidth = 1.5 * s
 boxPath.stroke()
 
@@ -80,9 +80,9 @@ boxPath.stroke()
 let titleY = boxBottom + boxHeight - 32 * s
 let titleAttrs: [NSAttributedString.Key: Any] = [
     .font: NSFont.boldSystemFont(ofSize: 12 * s),
-    .foregroundColor: NSColor(red: 0.55, green: 0.35, blue: 0.0, alpha: 1.0)
+    .foregroundColor: NSColor(red: 0.25, green: 0.45, blue: 0.25, alpha: 1.0)
 ]
-("IMPORTANT INSTALLATION INSTRUCTIONS" as NSString).draw(
+("GETTING STARTED" as NSString).draw(
     at: NSPoint(x: 48 * s, y: titleY), withAttributes: titleAttrs)
 
 // Body lines
@@ -90,10 +90,11 @@ let bodyAttrs: [NSAttributedString.Key: Any] = [
     .font: NSFont.systemFont(ofSize: 11 * s),
     .foregroundColor: NSColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1.0)
 ]
+let lineSpacing = 20.0 * s
 let lines: [(String, CGFloat)] = [
-    ("OpenSearch will be blocked the first time you open it.", titleY - 26 * s),
-    ("After you try to open it, go to System Settings \\u{{2192}} Privacy & Security,", titleY - 52 * s),
-    ("scroll down, and click \\u{{201C}}Open Anyway\\u{{201D}} next to the message about OpenSearch.", titleY - 70 * s),
+    ("1. Drag OpenSearch to Applications", titleY - lineSpacing),
+    ("2. Grant Full Disk Access: System Settings \\u{{2192}} Privacy & Security \\u{{2192}} Full Disk Access", titleY - lineSpacing * 2),
+    ("3. Launch OpenSearch and follow the setup wizard", titleY - lineSpacing * 3),
 ]
 for (text, y) in lines {{
     (text as NSString).draw(at: NSPoint(x: 48 * s, y: y), withAttributes: bodyAttrs)

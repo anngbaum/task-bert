@@ -25,6 +25,8 @@ export interface RawMessage {
   handle_id: number | null;
   service: string | null;
   associated_message_type: number;
+  associated_message_guid: string | null;
+  associated_message_emoji: string | null;
   thread_originator_guid: string | null;
   balloon_bundle_id: string | null;
   has_attachments: number;
@@ -41,6 +43,8 @@ export interface Message {
   handle_id: number | null;
   service: string | null;
   associated_message_type: number;
+  associated_message_guid: string | null;
+  associated_message_emoji: string | null;
   thread_originator_guid: string | null;
   balloon_bundle_id: string | null;
   has_attachments: boolean;

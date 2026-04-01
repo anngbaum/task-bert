@@ -231,6 +231,17 @@ actor SearchService {
         return try decoder.decode(ChatMetadataResponse.self, from: data).metadata
     }
 
+    func fetchLeaderboard(chatId: Int) async throws -> LeaderboardResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/chat-leaderboard"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "chatId", value: String(chatId))]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+        return try decoder.decode(LeaderboardResponse.self, from: data)
+    }
+
     struct RefreshMetadataResponse: Decodable {
         let chat_id: Int
         let summary: String
@@ -252,6 +263,40 @@ actor SearchService {
     struct ActionsResponse: Decodable {
         let key_events: [KeyEvent]
         let tasks: [TaskItem]
+    }
+
+    func moveTask(id: Int, bucket: String, date: Date? = nil) async throws {
+        let url = baseURL.appendingPathComponent("api/tasks/move")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: Any] = ["id": id, "bucket": bucket]
+        if let date {
+            body["date"] = ISO8601DateFormatter().string(from: date)
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+    }
+
+    func setTaskPriority(id: Int, priority: String) async throws {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/tasks/set-priority"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "id", value: String(id)),
+            URLQueryItem(name: "priority", value: priority),
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
     }
 
     func completeTask(id: Int) async throws {
@@ -421,6 +466,9 @@ actor SearchService {
         let anthropicApiKey: String?
         let openaiApiKey: String?
         let selectedModel: String?
+        let actionsModel: String?
+        let summaryModel: String?
+        let askModel: String?
     }
 
     struct ModelOption: Decodable, Identifiable {
