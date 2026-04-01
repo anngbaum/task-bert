@@ -64,7 +64,7 @@ async function callAgent(query: string): Promise<{ answer: string; message_links
 }
 
 const server = new McpServer({
-  name: 'imessage-search',
+  name: 'imessage-agent',
   version: '1.0.0',
 });
 

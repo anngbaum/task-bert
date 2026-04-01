@@ -188,9 +188,10 @@ export async function callLLM(
   config: LLMConfig,
   system: string,
   userMessage: string,
-  maxTokens: number = 512
+  maxTokens: number = 512,
+  modelOverride?: string
 ): Promise<string> {
-  const model = config.model ?? 'claude-haiku-4-5-20251001';
+  const model = modelOverride ?? config.model ?? 'claude-haiku-4-5-20251001';
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {

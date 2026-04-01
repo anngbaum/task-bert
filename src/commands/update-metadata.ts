@@ -411,24 +411,32 @@ Examples: "Send Mike the photos", "Book the restaurant for Friday", "Call Mom ba
 **low** — Softer suggestions. No explicit promise was made, but "Me" might want to follow up.
 Examples: "Check in with Sarah about her new job", "Wish Maddy happy birthday", "Follow up on weekend plans"
 
-CRITICAL: Before creating ANY task, scan the ENTIRE conversation to check if "Me" already did it. If "Me" already responded, asked, confirmed, or followed up — do NOT create a task for it. Only create tasks for things that are genuinely still pending.
+CRITICAL — Tasks are ONLY for things "Me" still needs to do. A task represents an action "Me" has NOT yet taken.
+If "Me" already did something in the conversation (asked, responded, confirmed, sent, etc.), that is DONE — not a task.
 
-Create a task when:
+Before creating any task, ask: "Did 'Me' already do this in the conversation?" If yes → no task.
+
+Examples of things that are NOT tasks:
+- "Me" asked Sara for a copy of the key → "Me" already asked. NOT a task. (It would only be a task if "Me" agreed to ask but hadn't yet.)
+- "Me" said "That sounds good!" to a dinner plan → "Me" already responded. NOT a task.
+- "Me" sent someone a link → "Me" already did it. NOT a task.
+
+Create a task ONLY when:
 - "Me" explicitly agreed or offered to do something AND has not done it yet in the conversation (high priority)
 - Someone made a direct, specific request AND "Me" has not addressed it yet (high priority)
-- Someone asked "Me" a specific question and "Me" has NOT responded yet anywhere later in the conversation. This is an unanswered question.
+- Someone asked "Me" a specific question and "Me" has NOT responded anywhere later in the conversation. This is an unanswered question.
   - If the question was asked more than 24 hours ago (before ${twentyFourHoursAgo}): **high** priority — "Respond to [Name]'s question about [topic]"
   - If the question was asked more than 12 hours ago (before ${twelveHoursAgo}): **low** priority — "Respond to [Name]'s question about [topic]"
   - If the question was asked less than 12 hours ago: do not create a task yet.
 
 DO NOT create tasks for:
-- Things "Me" already handled later in the conversation — e.g. if someone asked a question and "Me" responded, that is RESOLVED, not a task
-- Questions "Me" already asked — if "Me" asked someone a question and they answered, there is no task for "Me"
-- Conversations that ended naturally with no pending obligations (but DO create tasks for unanswered questions even if the conversation seems casual)
-- Rhetorical questions or casual greetings (e.g. "lol", "haha", "nice") — but a real question like "how was your trip?" or "what happened with X?" IS a specific question that deserves a task if unanswered
+- Things "Me" already did — if "Me" asked a question, sent a message, made a request, or took any action in the conversation, that action is COMPLETE. Do not create a task telling "Me" to do something they already did.
+- Answered questions — if someone asked "Me" something and "Me" responded ANYWHERE later (even briefly like "sounds good" or "yes"), it is resolved.
+- Confirmed plans — if a plan was proposed and agreed to, create a key_event, not a task.
+- Conversations that ended naturally with no pending obligations
+- Rhetorical questions or casual greetings (e.g. "lol", "haha", "nice")
 - Anything tied to a date that has already passed (before ${today})
 - One-time verification codes, OTPs, 2FA codes, or login tokens
-- Soft follow-ups like "check in on X" or "ask about X" if the conversation already covers that topic
 - Speculative follow-ups — do NOT create tasks suggesting "Me" should ask about details, check in, or follow up unless there is a clear unresolved obligation
 
 Each task should appear ONCE. Never create duplicate tasks for the same underlying thing.
@@ -569,11 +577,16 @@ No markdown fencing, no explanation.`;
     ).join('\n');
 
     try {
+      // Use a smarter model for action extraction — pick based on available API keys
+      const actionsModel = config.anthropicApiKey
+        ? 'claude-sonnet-4-5-20250514'
+        : 'gpt-4o';
       const text = await callLLM(
         config,
         systemPrompt,
         `=== Chat with ${chat.chatName} ===\nMessages labeled "Me" are from the user. Messages labeled with other names are from contacts.\n\n${msgLines}${existingBlock}`,
-        1024
+        1024,
+        actionsModel
       );
       const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
       // Try to extract JSON from the response even if there's extra text around it

@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "imessage": {
+    "imessage-agent": {
       "command": "npx",
       "args": ["tsx", "src/mcp-server.ts"],
       "cwd": "/Users/annbaum/Ann-Messages"
