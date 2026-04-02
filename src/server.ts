@@ -828,7 +828,8 @@ const server = http.createServer(async (req, res) => {
               console.log('[soft-reset] Re-generating metadata...');
               updateSyncProgress('metadata', 'Re-generating metadata...', 20);
               const llmConfig = getLLMConfig('summary');
-              await updateMetadata(llmConfig, { since: undefined, minMessages: 1 });
+              const metadataCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+              await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 1 });
               updateSyncProgress('done', 'Complete!', 100);
               console.log('[soft-reset] Complete.');
             } catch (err) {
