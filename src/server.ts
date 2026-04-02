@@ -1137,7 +1137,8 @@ async function start(): Promise<void> {
   if (!hardReset) {
     try {
       const countResult = await pg.query('SELECT COUNT(*) as count FROM message');
-      const msgCount = parseInt(countResult.rows[0] ? countResult.rows[0].count : '0', 10);
+      const row = countResult.rows[0] as Record<string, any> | undefined;
+      const msgCount = parseInt(row ? row.count : '0', 10);
       if (msgCount < 10) {
         console.warn(`[startup] Only ${msgCount} messages found — triggering hard refresh to repopulate.`);
         hardReset = true;
