@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Task Bert — Never miss a message again</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧹</text></svg>">
   <style>
     :root {
       --bg: #fafafa;
@@ -49,6 +50,11 @@
       margin: 0 auto;
       padding: 4rem 1.5rem 3rem;
       text-align: center;
+    }
+
+    .hero-broom {
+      display: block;
+      margin: 0 auto 1rem;
     }
 
     .hero h1 {
@@ -222,6 +228,41 @@
       color: var(--muted);
     }
 
+    .explore {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+      text-align: center;
+    }
+
+    .explore h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .explore p {
+      font-size: 1rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+    }
+
+    .explore-btn {
+      display: inline-block;
+      background: var(--fg);
+      color: var(--bg);
+      font-size: 1rem;
+      font-weight: 600;
+      padding: 0.75rem 2rem;
+      border-radius: 10px;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+
+    .explore-btn:hover {
+      opacity: 0.85;
+    }
+
     footer {
       max-width: 800px;
       margin: 0 auto;
@@ -243,10 +284,11 @@
 <body>
 
 <header>
-  <div class="logo">Task <span>Bert</span></div>
+  <div class="logo"><svg width="20" height="20" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><text y=".9em" font-size="90">🧹</text></svg> Task <span>Bert</span></div>
 </header>
 
 <section class="hero">
+  <svg class="hero-broom" width="80" height="80" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><text y=".9em" font-size="90">🧹</text></svg>
   <h1>Your texts, organized</h1>
   <p>Bert turns your iMessages into a clear, organized action list — so you never miss a reply, appointment, or important detail again.</p>
   <a href="https://github.com/anngbaum/task-bert/releases/latest/download/Bert.dmg" class="download-btn">Download Bert for Mac</a>
@@ -323,6 +365,12 @@
     <h3>What about the MCP server?</h3>
     <p>Bert includes an MCP server that lets you connect it to Claude Code or other MCP-compatible tools. If you use this, be aware that the connected service will be able to query your messages through Bert — just as it can already access anything else on your disk. This isn't unique to Bert: any tool with Full Disk Access (or any MCP client you grant access to) can read your messages. Use the same caution you would with any provider that has access to your machine.</p>
   </div>
+</section>
+
+<section class="explore">
+  <h2>Explore the Code</h2>
+  <p>Bert is open source. Check out the repo, file issues, or contribute.</p>
+  <a href="https://github.com/anngbaum/task-bert" class="explore-btn">View on GitHub</a>
 </section>
 
 <footer>
