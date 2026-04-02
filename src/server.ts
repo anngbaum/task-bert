@@ -1059,6 +1059,20 @@ async function start(): Promise<void> {
     }
   }
 
+  // If database has fewer than 10 messages, force a hard refresh to repopulate
+  if (!hardReset) {
+    try {
+      const countResult = await pg.query('SELECT COUNT(*) as count FROM message');
+      const msgCount = parseInt(countResult.rows[0]?.count ?? '0', 10);
+      if (msgCount < 10) {
+        console.warn(`[startup] Only ${msgCount} messages found — triggering hard refresh to repopulate.`);
+        hardReset = true;
+      }
+    } catch {
+      // Table may not exist yet — hard reset will handle it
+    }
+  }
+
   // Run sync on startup, then schedule hourly pull-latest
   if (hardReset) {
     console.log('[startup] Hard reset requested via --hard-reset flag.');
