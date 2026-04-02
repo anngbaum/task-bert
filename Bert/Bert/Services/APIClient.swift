@@ -119,6 +119,7 @@ actor APIClient {
         let ready: Bool
         let syncing: Bool
         let progress: HealthProgress?
+        let needsApiKeys: Bool?
     }
 
     struct ContactsResponse: Decodable {

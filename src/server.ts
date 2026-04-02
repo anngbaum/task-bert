@@ -66,7 +66,12 @@ const MODEL_DEFAULTS: Record<string, string> = {
   ask: 'claude-haiku-4-5-20251001',
 };
 
-function getLLMConfig(purpose: 'actions' | 'summary' | 'ask' = 'summary') {
+async function getLLMConfig(purpose: 'actions' | 'summary' | 'ask' = 'summary') {
+  // If no keys yet, give the client a chance to push them
+  if (!settings.anthropicApiKey && !settings.openaiApiKey) {
+    await waitForApiKeys(10000);
+  }
+
   const modelSetting = purpose === 'actions' ? settings.actionsModel
     : purpose === 'ask' ? settings.askModel
     : settings.summaryModel;
@@ -145,6 +150,35 @@ function loadSettings(): AppSettings {
     // Ignore corrupt settings
   }
   return {};
+}
+
+// Tracks whether the client has connected (hit any endpoint). Once the client
+// is connected and still no keys, there's no point waiting further.
+let clientHasConnected = false;
+
+/** Resolves once the Swift client pushes API keys, or early if the client
+ *  connects without keys (meaning the user hasn't configured any). */
+function waitForApiKeys(timeoutMs = 30000): Promise<void> {
+  if (settings.anthropicApiKey || settings.openaiApiKey) return Promise.resolve();
+  return new Promise((resolve) => {
+    const interval = setInterval(() => {
+      if (settings.anthropicApiKey || settings.openaiApiKey) {
+        clearInterval(interval);
+        clearTimeout(timer);
+        console.log('[startup] API key(s) received from client.');
+        resolve();
+      } else if (clientHasConnected) {
+        // Client is alive but has no keys — no point waiting
+        clearInterval(interval);
+        clearTimeout(timer);
+        resolve();
+      }
+    }, 200);
+    const timer = setTimeout(() => {
+      clearInterval(interval);
+      resolve();
+    }, timeoutMs);
+  });
 }
 
 function saveSettings(settings: AppSettings): void {
@@ -504,7 +538,7 @@ const server = http.createServer(async (req, res) => {
             break;
           }
           try {
-            const llmConfig = getLLMConfig('summary');
+            const llmConfig = await getLLMConfig('summary');
             // Pull new messages for this chat, embed, and refresh metadata
             const { newMessages } = await syncSingleConversation(chatId, llmConfig);
             // Return the updated summary
@@ -519,7 +553,7 @@ const server = http.createServer(async (req, res) => {
         }
         case '/api/update-metadata': {
           try {
-            const llmConfig = getLLMConfig('summary');
+            const llmConfig = await getLLMConfig('summary');
             const sinceParam = params.get('since');
             const since = sinceParam ? new Date(sinceParam) : undefined;
             const minMessages = parseInt(params.get('minMessages') || '1', 10);
@@ -752,7 +786,7 @@ const server = http.createServer(async (req, res) => {
             break;
           }
           try {
-            const llmConfig = getLLMConfig('ask');
+            const llmConfig = await getLLMConfig('ask');
             console.log(`[agent] Received query: "${parsed.query}"`);
 
             // Stream newline-delimited JSON: progress events followed by final result
@@ -827,7 +861,7 @@ const server = http.createServer(async (req, res) => {
               db.exec(`DELETE FROM metadata_meta`);
               console.log('[soft-reset] Re-generating metadata...');
               updateSyncProgress('metadata', 'Re-generating metadata...', 20);
-              const llmConfig = getLLMConfig('summary');
+              const llmConfig = await getLLMConfig('summary');
               const metadataCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
               await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 1 });
               updateSyncProgress('done', 'Complete!', 100);
@@ -853,7 +887,7 @@ const server = http.createServer(async (req, res) => {
             initialSyncDone = false;
             syncInProgress = true;
             jsonResponse(res, { started: true, mode: 'hardReset' });
-            unifiedSync({ mode: 'hardReset', metadataDays: days, llmConfig: getLLMConfig('summary') })
+            unifiedSync({ mode: 'hardReset', metadataDays: days, llmConfig: () => getLLMConfig('summary') })
               .then(() => {
                 console.log('[sync] Hard reset complete.');
                 initialSyncDone = true;
@@ -867,7 +901,7 @@ const server = http.createServer(async (req, res) => {
             // UI resync button: pull latest + metadata for all conversations in window
             syncInProgress = true;
             try {
-              const result = await unifiedSync({ mode: 'resync', metadataDays: days, llmConfig: getLLMConfig('summary') });
+              const result = await unifiedSync({ mode: 'resync', metadataDays: days, llmConfig: () => getLLMConfig('summary') });
               jsonResponse(res, result);
             } catch (err) {
               errorResponse(res, (err as Error).message, 500);
@@ -886,11 +920,13 @@ const server = http.createServer(async (req, res) => {
     // GET routes
     switch (url.pathname) {
       case '/health':
+        clientHasConnected = true;
         jsonResponse(res, {
           status: 'ok',
           ready: initialSyncDone,
           syncing: syncInProgress,
           progress: syncInProgress ? getSyncProgress() : undefined,
+          needsApiKeys: !settings.anthropicApiKey && !settings.openaiApiKey,
         });
         break;
       case '/api/data-range': {
@@ -1059,18 +1095,41 @@ const server = http.createServer(async (req, res) => {
           // Query the full SQLite chat.db for complete history (PGlite only has recent synced data)
           const sqlite = openSqlite();
 
-          // SQLite handle table has 'id' (phone/email) but no display_name.
-          // Get display names from PGlite (populated from address book), fall back to identifier.
+          // iMessage creates duplicate handle rows for the same person (different
+          // services/times), so chat_handle_join and message.handle_id can reference
+          // different ROWIDs for the same identifier. Normalize everything by
+          // handle.id (the phone/email) instead of ROWID.
+
+          // Build a ROWID → identifier lookup for all handles referenced in this chat
+          const handleRows = sqlite.prepare(
+            `SELECT DISTINCT h.ROWID as handle_id, h.id as identifier
+             FROM handle h
+             WHERE h.ROWID IN (
+               SELECT handle_id FROM chat_handle_join WHERE chat_id = ?
+               UNION
+               SELECT handle_id FROM message m
+               JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+               WHERE cmj.chat_id = ? AND m.is_from_me = 0
+             )`
+          ).all(chatId, chatId) as { handle_id: number; identifier: string }[];
+          const handleIdToIdentifier = new Map(handleRows.map(h => [h.handle_id, h.identifier]));
+
+          // Unique participants by identifier
+          const uniqueIdentifiers = [...new Set(handleRows.map(h => h.identifier))];
+
+          // Look up display names from PGlite (populated from address book)
           const pg = await getPglite();
-          const pgHandles = await pg.query(
-            `SELECT h.id as handle_id, COALESCE(h.display_name, h.identifier) as name
-             FROM chat_handle_join chj
-             JOIN handle h ON chj.handle_id = h.id
-             WHERE chj.chat_id = $1
-             ORDER BY name`,
-            [chatId]
+          const pgNames = await pg.query(
+            `SELECT DISTINCT ON (identifier) identifier, COALESCE(display_name, identifier) as name
+             FROM handle WHERE identifier = ANY($1)
+             ORDER BY identifier, display_name NULLS LAST`,
+            [uniqueIdentifiers]
           );
-          const participants = pgHandles.rows as { handle_id: number; name: string }[];
+          const identifierToName = new Map((pgNames.rows as { identifier: string; name: string }[]).map(r => [r.identifier, r.name]));
+          const participants = uniqueIdentifiers.map(identifier => ({
+            identifier,
+            name: identifierToName.get(identifier) ?? identifier,
+          }));
 
           // associated_message_guid format: "p:<part>/<original_guid>"
           // Use substr + instr to extract the original guid after "/"
@@ -1078,30 +1137,33 @@ const server = http.createServer(async (req, res) => {
           const hasEmoji = hasColumn(sqlite, 'message', 'associated_message_emoji');
           const emojiSelect = hasEmoji ? 'r.associated_message_emoji as emoji,' : '';
           const emojiGroupBy = hasEmoji ? ', r.associated_message_emoji' : '';
+          // Join through handle to normalize by identifier instead of ROWID
           const reactions = sqlite.prepare(
             `SELECT
                orig.is_from_me as orig_is_from_me,
-               orig.handle_id as orig_handle_id,
+               oh.id as orig_identifier,
                r.associated_message_type as reaction_type,
                ${emojiSelect}
                COUNT(*) as cnt
              FROM message r
              JOIN message orig ON orig.guid = substr(r.associated_message_guid, instr(r.associated_message_guid, '/') + 1)
              JOIN chat_message_join cmj ON cmj.message_id = orig.ROWID
+             LEFT JOIN handle oh ON oh.ROWID = orig.handle_id
              WHERE cmj.chat_id = ?
                AND r.associated_message_type BETWEEN 2000 AND 2006
-             GROUP BY orig.is_from_me, orig.handle_id, r.associated_message_type${emojiGroupBy}`
-          ).all(chatId) as { orig_is_from_me: number; orig_handle_id: number; reaction_type: number; emoji: string | null; cnt: number }[];
+             GROUP BY orig.is_from_me, oh.id, r.associated_message_type${emojiGroupBy}`
+          ).all(chatId) as { orig_is_from_me: number; orig_identifier: string | null; reaction_type: number; emoji: string | null; cnt: number }[];
 
           // Message counts per participant (excluding reactions/edits)
           const messageCounts = sqlite.prepare(
-            `SELECT m.is_from_me, m.handle_id, COUNT(*) as cnt
+            `SELECT m.is_from_me, h.id as identifier, COUNT(*) as cnt
              FROM message m
              JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+             LEFT JOIN handle h ON h.ROWID = m.handle_id
              WHERE cmj.chat_id = ?
                AND m.associated_message_type = 0
-             GROUP BY m.is_from_me, m.handle_id`
-          ).all(chatId) as { is_from_me: number; handle_id: number; cnt: number }[];
+             GROUP BY m.is_from_me, h.id`
+          ).all(chatId) as { is_from_me: number; identifier: string | null; cnt: number }[];
 
           sqlite.close();
 

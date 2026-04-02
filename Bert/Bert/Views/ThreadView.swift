@@ -23,7 +23,7 @@ struct ThreadView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warning)
                     Text(error)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -43,7 +43,7 @@ struct ThreadView: View {
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.blue)
+            .foregroundStyle(AppColors.link)
 
             Spacer()
 
@@ -107,7 +107,7 @@ struct ThreadView: View {
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: msg.is_from_me ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
                 .font(.caption)
-                .foregroundStyle(msg.is_from_me ? .blue : .secondary)
+                .foregroundStyle(msg.is_from_me ? AppColors.messageSent : AppColors.messageReceived)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -138,7 +138,7 @@ struct ThreadView: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
-        .background(isAnchor ? Color.yellow.opacity(0.3) : Color.clear)
+        .background(isAnchor ? AppColors.messageAnchor : Color.clear)
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -198,7 +198,7 @@ struct ThreadView: View {
                         .font(.caption2)
                 }
             }
-            .foregroundStyle(.blue)
+            .foregroundStyle(AppColors.link)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -226,7 +226,7 @@ struct ThreadView: View {
                 }
                 Text(direction == "older" ? "Load older messages..." : "Load newer messages...")
                     .font(.caption)
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(AppColors.link)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)

@@ -13,13 +13,13 @@ struct ChatMetadata: Identifiable, Decodable {
 }
 
 struct LeaderboardParticipant: Decodable {
-    let handle_id: Int
+    let identifier: String
     let name: String
 }
 
 struct LeaderboardReaction: Decodable {
     let orig_is_from_me: Bool
-    let orig_handle_id: Int?
+    let orig_identifier: String?
     let reaction_type: Int
     let emoji: String?
     let cnt: Int
@@ -27,7 +27,7 @@ struct LeaderboardReaction: Decodable {
 
 struct LeaderboardMessageCount: Decodable {
     let is_from_me: Bool
-    let handle_id: Int?
+    let identifier: String?
     let cnt: Int
 }
 

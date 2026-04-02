@@ -8,7 +8,7 @@ struct ResultRowView: View {
             HStack {
                 Label(result.displaySender, systemImage: result.is_from_me ? "arrow.up.circle" : "arrow.down.circle")
                     .font(.headline)
-                    .foregroundStyle(result.is_from_me ? .blue : .primary)
+                    .foregroundStyle(result.is_from_me ? AppColors.messageSent : .primary)
 
                 if let chatName = result.chat_name, !chatName.isEmpty {
                     Text(chatName.hasPrefix("to ") ? chatName : "in \(chatName)")
@@ -67,7 +67,7 @@ struct ResultRowView: View {
                         .lineLimit(1)
                 }
             }
-            .foregroundStyle(.blue)
+            .foregroundStyle(AppColors.link)
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)

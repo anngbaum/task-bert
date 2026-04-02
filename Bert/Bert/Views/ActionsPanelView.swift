@@ -50,9 +50,9 @@ struct ActionsPanelView: View {
                                 bucket: "todo",
                                 title: "To Do",
                                 icon: "checklist",
-                                color: .green,
+                                color: AppColors.taskTodo,
                                 tasks: todoTasks,
-                                accentColor: { _ in .green }
+                                accentColor: { _ in AppColors.taskTodo }
                             )
 
                             // Upcoming
@@ -60,9 +60,9 @@ struct ActionsPanelView: View {
                                 bucket: "upcoming",
                                 title: "Upcoming",
                                 icon: "calendar.badge.clock",
-                                color: .orange,
+                                color: AppColors.taskUpcoming,
                                 tasks: upcomingTasks,
-                                accentColor: { _ in .orange }
+                                accentColor: { _ in AppColors.taskUpcoming }
                             )
 
                             // Waiting
@@ -70,9 +70,9 @@ struct ActionsPanelView: View {
                                 bucket: "waiting",
                                 title: "Waiting",
                                 icon: "hourglass",
-                                color: .secondary,
+                                color: AppColors.taskWaiting,
                                 tasks: waitingTasks,
-                                accentColor: { _ in .secondary }
+                                accentColor: { _ in AppColors.taskWaiting }
                             )
 
                             // All caught up
@@ -365,7 +365,7 @@ struct TaskRowView: View {
                     if let date = task.date {
                         Label(dueDateText(date), systemImage: "calendar")
                             .font(.caption2)
-                            .foregroundStyle(isPastDue(date) ? .red : .secondary)
+                            .foregroundStyle(isPastDue(date) ? AppColors.error : .secondary)
                     }
                 }
                 .opacity(markedDone ? 0.5 : 1)
@@ -384,7 +384,7 @@ struct TaskRowView: View {
             } label: {
                 Image(systemName: markedDone ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20))
-                    .foregroundStyle(markedDone ? .green : resolvedAccent)
+                    .foregroundStyle(markedDone ? AppColors.taskDone : resolvedAccent)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
             }
@@ -394,7 +394,7 @@ struct TaskRowView: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
-        .background(Color.primary.opacity(0.03))
+        .background(AppColors.cardBackground)
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -456,7 +456,7 @@ struct EventRowView: View {
                 if let msg = calendarMessage {
                     Text(msg)
                         .font(.caption2)
-                        .foregroundStyle(msg.contains("Failed") || msg.contains("denied") ? .red : .green)
+                        .foregroundStyle(msg.contains("Failed") || msg.contains("denied") ? AppColors.error : AppColors.success)
                 }
             }
 
@@ -480,7 +480,7 @@ struct EventRowView: View {
                 } label: {
                     Image(systemName: "calendar.badge.plus")
                         .font(.system(size: 14))
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(AppColors.eventAccent)
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }
@@ -522,7 +522,7 @@ struct EventRowView: View {
         .opacity(isDeleted ? 0.3 : 1)
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
-        .background(Color.primary.opacity(0.03))
+        .background(AppColors.cardBackground)
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -651,7 +651,7 @@ struct CalendarPopoverView: View {
             Button(action: onAddApple) {
                 HStack(spacing: 6) {
                     Image(systemName: "calendar")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppColors.appleCalendar)
                     Text("Add to Apple Calendar")
                     Spacer()
                 }
@@ -662,7 +662,7 @@ struct CalendarPopoverView: View {
             Button(action: onAddGoogle) {
                 HStack(spacing: 6) {
                     Image(systemName: "globe")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(AppColors.googleCalendar)
                     Text("Add to Google Calendar")
                     Spacer()
                 }
@@ -683,7 +683,7 @@ struct CompletedRowView: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 14))
-                .foregroundStyle(.green.opacity(0.5))
+                .foregroundStyle(AppColors.taskCompleted)
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -802,7 +802,7 @@ struct EditEventFormView: View {
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03))
+                .background(AppColors.cardBackground)
                 .cornerRadius(6)
             }
 

@@ -91,7 +91,7 @@ struct ContentView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
-                            .background(Color.accentColor.opacity(0.08))
+                            .background(AppColors.syncBanner)
                         }
 
                         // Content for selected tab
@@ -212,22 +212,22 @@ struct ContentView: View {
                     .fontWeight(.medium)
 
                 if tab == .conversations && !viewModel.chatMetadata.isEmpty {
-                    badgeView(count: viewModel.chatMetadata.count, color: .blue)
+                    badgeView(count: viewModel.chatMetadata.count, color: AppColors.badgeConversations)
                 }
                 if tab == .actions {
                     let todoCount = viewModel.tasks.filter { $0.resolvedBucket == "todo" }.count
                     if todoCount > 0 {
-                        badgeView(count: todoCount, color: .green)
+                        badgeView(count: todoCount, color: AppColors.badgeActions)
                     }
                 }
                 if tab == .events && !viewModel.keyEvents.isEmpty {
-                    badgeView(count: viewModel.keyEvents.count, color: .purple)
+                    badgeView(count: viewModel.keyEvents.count, color: AppColors.badgeEvents)
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(selectedTab == tab ? Color.accentColor.opacity(0.15) : Color.clear)
-            .foregroundColor(disabled ? .gray : (selectedTab == tab ? .accentColor : .secondary))
+            .background(selectedTab == tab ? AppColors.selectedTab : Color.clear)
+            .foregroundColor(disabled ? Color.gray : (selectedTab == tab ? Color.accentColor : Color.secondary))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
@@ -351,7 +351,7 @@ struct OnboardingApiKeyView: View {
                 if let error = errorMessage {
                     Text(error)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppColors.error)
                 }
             }
             .frame(width: 340)

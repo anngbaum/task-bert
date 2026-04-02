@@ -9,7 +9,7 @@ struct AgentView: View {
             HStack(spacing: 12) {
                 HStack {
                     Image(systemName: "sparkles")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(AppColors.messageSent)
 
                     TextField("Ask anything about your messages...", text: $viewModel.agentQuery)
                         .textFieldStyle(.plain)
@@ -57,10 +57,10 @@ struct AgentView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 36))
-                        .foregroundStyle(.red.opacity(0.6))
+                        .foregroundStyle(AppColors.errorMuted)
                     Text(error)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppColors.error)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
                 }
@@ -251,7 +251,7 @@ struct DataRangeBannerView: View {
                             .font(.caption2)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Color.accentColor.opacity(0.1))
+                            .background(AppColors.importButton)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                     .buttonStyle(.plain)
@@ -263,10 +263,10 @@ struct DataRangeBannerView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.caption2)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(AppColors.success)
                     Text("Import complete. Try your search again.")
                         .font(.caption2)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(AppColors.success)
                 }
             } else if isImporting {
                 HStack(spacing: 6) {
@@ -279,7 +279,7 @@ struct DataRangeBannerView: View {
             } else if let error = errorMessage {
                 Text(error)
                     .font(.caption2)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppColors.error)
             } else if showImport {
                 HStack(spacing: 8) {
                     Text("Import from:")
@@ -303,7 +303,7 @@ struct DataRangeBannerView: View {
             }
         }
         .padding(noResults ? 12 : 8)
-        .background(noResults ? Color.orange.opacity(0.08) : Color.secondary.opacity(0.06))
+        .background(noResults ? AppColors.noResultsBackground : AppColors.bannerBackground)
         .clipShape(RoundedRectangle(cornerRadius: noResults ? 8 : 6))
         .onAppear {
             if noResults { showImport = true }
@@ -523,9 +523,9 @@ struct AgentStepRow: View {
 
     private var iconColor: Color {
         switch step.eventType {
-        case "thinking": return .purple
-        case "tool_call": return .blue
-        case "tool_result": return .green
+        case "thinking": return AppColors.agentThinking
+        case "tool_call": return AppColors.agentToolCall
+        case "tool_result": return AppColors.agentToolResult
         default: return .secondary
         }
     }
@@ -579,7 +579,7 @@ struct MessageLinkRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(Color.primary.opacity(0.02))
+        .background(AppColors.subtleBackground)
     }
 
     private func formatDate(_ isoString: String) -> String {

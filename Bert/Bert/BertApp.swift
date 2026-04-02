@@ -150,7 +150,7 @@ struct ServerInitializingView: View {
                     if let error = keyError {
                         Text(error)
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(AppColors.error)
                     }
 
                     Button {
@@ -176,7 +176,7 @@ struct ServerInitializingView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(AppColors.success)
                     Text("API key saved — summaries will be generated automatically.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -242,7 +242,7 @@ struct FullDiskAccessView: View {
         VStack(spacing: 20) {
             Image(systemName: "lock.shield")
                 .font(.system(size: 48))
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppColors.warning)
 
             Text("Full Disk Access Required")
                 .font(.title2)
@@ -300,7 +300,7 @@ struct ServerErrorView: View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 40))
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppColors.warning)
             Text("Server Error")
                 .font(.title2)
                 .fontWeight(.semibold)

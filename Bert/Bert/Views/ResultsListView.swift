@@ -16,7 +16,7 @@ struct ResultsListView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warning)
                     Text(error)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

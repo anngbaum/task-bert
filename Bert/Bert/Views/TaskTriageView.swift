@@ -48,7 +48,7 @@ struct TaskTriageView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "checkmark.circle")
                         .font(.system(size: 48))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(AppColors.triageSuccess)
                     Text("No tasks yet")
                         .font(.title3)
                         .foregroundStyle(.secondary)
@@ -62,7 +62,7 @@ struct TaskTriageView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "checklist")
                         .font(.system(size: 36))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.triageHeader)
 
                     Text("Review Your To-Dos")
                         .font(.title2)
@@ -92,7 +92,7 @@ struct TaskTriageView: View {
                             ForEach(todoTasks) { task in
                                 TaskRowView(
                                     task: task,
-                                    accentColor: .orange,
+                                    accentColor: AppColors.taskUpcoming,
                                     onComplete: { await viewModel.completeTask(id: task.id) },
                                     onTap: nil,
                                     onTogglePriority: nil
@@ -107,7 +107,7 @@ struct TaskTriageView: View {
                                 VStack(spacing: 4) {
                                     Image(systemName: "checkmark.circle")
                                         .font(.system(size: 24))
-                                        .foregroundStyle(.green)
+                                        .foregroundStyle(AppColors.triageSuccess)
                                     Text("All caught up!")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -122,7 +122,7 @@ struct TaskTriageView: View {
                             Text("Moved to Upcoming")
                                 .font(.caption)
                                 .fontWeight(.semibold)
-                                .foregroundStyle(.purple)
+                                .foregroundStyle(AppColors.eventAccent)
                                 .padding(.horizontal, 4)
                                 .padding(.top, 8)
 
@@ -130,7 +130,7 @@ struct TaskTriageView: View {
                                 HStack(spacing: 8) {
                                     Image(systemName: "calendar.badge.clock")
                                         .font(.caption)
-                                        .foregroundStyle(.purple)
+                                        .foregroundStyle(AppColors.eventAccent)
                                     Text(item.title)
                                         .font(.caption)
                                         .lineLimit(1)
@@ -138,7 +138,7 @@ struct TaskTriageView: View {
                                 }
                                 .padding(.vertical, 4)
                                 .padding(.horizontal, 6)
-                                .background(Color.purple.opacity(0.05))
+                                .background(AppColors.eventAccentBackground)
                                 .cornerRadius(6)
                             }
                         }
@@ -157,18 +157,18 @@ struct TaskTriageView: View {
                         Text("Drag here to move to Upcoming")
                             .font(.caption)
                     }
-                    .foregroundStyle(isTargetedUpcoming ? .purple : .secondary)
+                    .foregroundStyle(isTargetedUpcoming ? AppColors.eventAccent : .secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(isTargetedUpcoming ? Color.purple.opacity(0.12) : Color.purple.opacity(0.04))
+                        .fill(isTargetedUpcoming ? AppColors.eventDropZoneTargeted : AppColors.eventDropZone)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(
-                            isTargetedUpcoming ? Color.purple.opacity(0.4) : Color.purple.opacity(0.15),
+                            isTargetedUpcoming ? AppColors.eventDropZoneBorderTargeted : AppColors.eventDropZoneBorder,
                             style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
                         )
                 )

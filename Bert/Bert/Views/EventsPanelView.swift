@@ -226,7 +226,7 @@ struct RemindMeFormView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "calendar.badge.clock")
                         .font(.caption2)
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(AppColors.eventAccent)
                     Text(event.title)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -234,7 +234,7 @@ struct RemindMeFormView: View {
                 }
             }
             .padding(8)
-            .background(Color.primary.opacity(0.03))
+            .background(AppColors.cardBackground)
             .cornerRadius(6)
 
             Spacer()

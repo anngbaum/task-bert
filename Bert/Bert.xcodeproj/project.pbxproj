@@ -38,6 +38,7 @@
 		A10026 /* EventsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* EventsPanelView.swift */; };
 		A10027 /* LeaderboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* LeaderboardView.swift */; };
 		A10028 /* TaskTriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10028 /* TaskTriageView.swift */; };
+		A10030 /* AppColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* AppColors.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +74,7 @@
 		B10026 /* EventsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsPanelView.swift; sourceTree = "<group>"; };
 		B10027 /* LeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardView.swift; sourceTree = "<group>"; };
 		B10028 /* TaskTriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskTriageView.swift; sourceTree = "<group>"; };
+		B10030 /* AppColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppColors.swift; sourceTree = "<group>"; };
 		C10001 /* Bert.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bert.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -99,6 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				B10001 /* BertApp.swift */,
+				B10030 /* AppColors.swift */,
 				3EE72FDC2F70449B005A7A64 /* Assets.xcassets */,
 				B10015 /* Info.plist */,
 				E10003 /* Models */,
@@ -303,6 +306,7 @@
 				A10027 /* LeaderboardView.swift in Sources */,
 				A10028 /* TaskTriageView.swift in Sources */,
 				A10029 /* KeychainManager.swift in Sources */,
+				A10030 /* AppColors.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

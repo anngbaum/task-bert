@@ -77,7 +77,7 @@ struct ChatMetadataRowView: View {
                             Text("Leaderboard")
                                 .font(.caption2)
                         }
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(AppColors.link)
                     }
                     .buttonStyle(.plain)
                     .help("See reaction leaderboard")
@@ -111,7 +111,7 @@ struct ChatMetadataRowView: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(Color.primary.opacity(0.03))
+        .background(AppColors.cardBackground)
         .cornerRadius(6)
     }
 }

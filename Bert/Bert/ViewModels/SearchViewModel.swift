@@ -126,27 +126,33 @@ final class SearchViewModel: ObservableObject {
         }
 
         Task {
+            // Push API keys first so the server has them before starting sync
+            await checkApiKeyStatus()
             await loadContacts()
             await loadGroups()
             await loadDataRange()
-            await checkApiKeyStatus()
             await pollServerSyncStatus()
         }
     }
 
     @MainActor
     func checkApiKeyStatus() async {
-        // Check Keychain for stored keys and push them to the server (in-memory only)
         let anthropicKey = KeychainManager.anthropicApiKey
         let openaiKey = KeychainManager.openaiApiKey
         hasApiKey = (anthropicKey != nil || openaiKey != nil)
+        await pushApiKeysToServer()
+    }
 
-        if hasApiKey {
-            var updates: [String: String] = [:]
-            if let key = anthropicKey { updates["anthropicApiKey"] = key }
-            if let key = openaiKey { updates["openaiApiKey"] = key }
-            try? await service.updateSettings(updates)
-        }
+    /// Push Keychain-stored API keys to the server's in-memory settings.
+    @MainActor
+    private func pushApiKeysToServer() async {
+        let anthropicKey = KeychainManager.anthropicApiKey
+        let openaiKey = KeychainManager.openaiApiKey
+        guard anthropicKey != nil || openaiKey != nil else { return }
+        var updates: [String: String] = [:]
+        if let key = anthropicKey { updates["anthropicApiKey"] = key }
+        if let key = openaiKey { updates["openaiApiKey"] = key }
+        try? await service.updateSettings(updates)
     }
 
     /// Poll the server's health endpoint on startup to detect background syncs.
@@ -158,6 +164,7 @@ final class SearchViewModel: ObservableObject {
 
         do {
             let health = try await service.fetchHealth()
+            if health.needsApiKeys == true { await pushApiKeysToServer() }
             if health.syncing {
                 isSyncing = true
                 lastSyncMessage = progressMessage(health.progress)
@@ -166,6 +173,7 @@ final class SearchViewModel: ObservableObject {
                 while true {
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     let h = try await service.fetchHealth()
+                    if h.needsApiKeys == true { await pushApiKeysToServer() }
                     if !h.syncing && h.ready {
                         break
                     }

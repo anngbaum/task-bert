@@ -235,16 +235,16 @@ struct SearchBarView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .background(index == selectedTypeaheadIndex ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
+                .background(index == selectedTypeaheadIndex ? AppColors.filterChip : AppColors.buttonBackground)
             }
         }
         .frame(width: 260)
         .background(Color(nsColor: .windowBackgroundColor))
         .cornerRadius(6)
-        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        .shadow(color: AppColors.dropShadow, radius: 4, y: 2)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                .stroke(AppColors.dividerStroke, lineWidth: 1)
         )
     }
 
@@ -262,7 +262,7 @@ struct SearchBarView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(Color.accentColor.opacity(0.15))
+        .background(AppColors.filterChip)
         .clipShape(Capsule())
     }
 
@@ -279,7 +279,7 @@ struct SearchBarView: View {
                 .font(.caption)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(isAllTime ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05))
+                .background(isAllTime ? AppColors.filterSelected : AppColors.buttonBackground)
                 .foregroundStyle(isAllTime ? Color.accentColor : .primary)
                 .clipShape(Capsule())
         }
@@ -298,7 +298,7 @@ struct SearchBarView: View {
                 .font(.caption)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(viewModel.filters.timePreset == preset ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05))
+                .background(viewModel.filters.timePreset == preset ? AppColors.filterSelected : AppColors.buttonBackground)
                 .foregroundStyle(viewModel.filters.timePreset == preset ? Color.accentColor : .primary)
                 .clipShape(Capsule())
         }
@@ -322,7 +322,7 @@ struct SearchBarView: View {
                 .font(.caption)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(viewModel.filters.isCustomDateRange && viewModel.filters.timePreset == nil ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05))
+                .background(viewModel.filters.isCustomDateRange && viewModel.filters.timePreset == nil ? AppColors.filterSelected : AppColors.buttonBackground)
                 .foregroundStyle(viewModel.filters.isCustomDateRange && viewModel.filters.timePreset == nil ? Color.accentColor : .primary)
                 .clipShape(Capsule())
         }

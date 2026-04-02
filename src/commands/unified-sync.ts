@@ -51,8 +51,8 @@ export interface UnifiedSyncOptions {
   metadataDays?: number;
   /** Embedding batch size */
   embedBatchSize?: number;
-  /** LLM config for metadata — if omitted, loads from settings.json. Use a function to defer resolution until metadata step. */
-  llmConfig?: LLMConfig | (() => LLMConfig);
+  /** LLM config for metadata — if omitted, loads from settings.json. Use a function (sync or async) to defer resolution until metadata step. */
+  llmConfig?: LLMConfig | (() => LLMConfig) | (() => Promise<LLMConfig>);
 }
 
 export interface UnifiedSyncResult {
@@ -73,9 +73,13 @@ function loadSettings(): { anthropicApiKey?: string; openaiApiKey?: string; sele
   return {};
 }
 
-function getLLMConfig(options: UnifiedSyncOptions): LLMConfig {
+async function getLLMConfig(options: UnifiedSyncOptions): Promise<LLMConfig> {
   if (options.llmConfig) {
-    return typeof options.llmConfig === 'function' ? options.llmConfig() : options.llmConfig;
+    if (typeof options.llmConfig === 'function') {
+      const result = options.llmConfig();
+      return result instanceof Promise ? await result : result;
+    }
+    return options.llmConfig;
   }
   const s = loadSettings();
   return {
@@ -226,7 +230,7 @@ export async function unifiedSync(options: UnifiedSyncOptions): Promise<UnifiedS
 
   // Metadata (only if an API key is configured)
   if (!skipMetadata) {
-    const llmConfig = getLLMConfig(options);
+    const llmConfig = await getLLMConfig(options);
     if (hasValidLLMConfig(llmConfig)) {
       const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
 
@@ -357,7 +361,7 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
 
   // Update metadata for recent conversations (only if an API key is configured)
   if (!skipMetadata) {
-    const llmConfig = getLLMConfig(options);
+    const llmConfig = await getLLMConfig(options);
     if (hasValidLLMConfig(llmConfig)) {
       const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
       console.log(`\nUpdating chat metadata (last ${metadataDays}d)...`);

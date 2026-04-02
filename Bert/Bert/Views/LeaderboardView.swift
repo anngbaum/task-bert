@@ -96,10 +96,10 @@ struct LeaderboardView: View {
 
         // Build message count lookup
         let myMessages = data.message_counts.filter { $0.is_from_me }.reduce(0) { $0 + $1.cnt }
-        var handleMessageCounts: [Int: Int] = [:]
+        var identifierMessageCounts: [String: Int] = [:]
         for mc in data.message_counts where !mc.is_from_me {
-            if let hid = mc.handle_id {
-                handleMessageCounts[hid, default: 0] += mc.cnt
+            if let ident = mc.identifier {
+                identifierMessageCounts[ident, default: 0] += mc.cnt
             }
         }
 
@@ -111,20 +111,20 @@ struct LeaderboardView: View {
         }
         let myTotal = myCounts.values.reduce(0, +)
         if myTotal > 0 || myMessages > 0 {
-            entries.append(LeaderboardEntry(id: -1, name: "Me", reactionCounts: myCounts, totalReactions: myTotal, messageCount: myMessages))
+            entries.append(LeaderboardEntry(identifier: nil, name: "Me", reactionCounts: myCounts, totalReactions: myTotal, messageCount: myMessages))
         }
 
         // Other participants
         for participant in data.participants {
-            let reactions = data.reactions.filter { !$0.orig_is_from_me && $0.orig_handle_id == participant.handle_id }
+            let reactions = data.reactions.filter { !$0.orig_is_from_me && $0.orig_identifier == participant.identifier }
             var counts: [Int: Int] = [:]
             for r in reactions {
                 counts[r.reaction_type, default: 0] += r.cnt
             }
             let total = counts.values.reduce(0, +)
-            let msgCount = handleMessageCounts[participant.handle_id] ?? 0
+            let msgCount = identifierMessageCounts[participant.identifier] ?? 0
             if total > 0 || msgCount > 0 {
-                entries.append(LeaderboardEntry(id: participant.handle_id, name: participant.name, reactionCounts: counts, totalReactions: total, messageCount: msgCount))
+                entries.append(LeaderboardEntry(identifier: participant.identifier, name: participant.name, reactionCounts: counts, totalReactions: total, messageCount: msgCount))
             }
         }
 
@@ -135,10 +135,10 @@ struct LeaderboardView: View {
 
     private func customEmojis(for entry: LeaderboardEntry, data: LeaderboardResponse) -> [String: Int] {
         let reactions: [LeaderboardReaction]
-        if entry.id == -1 {
+        if entry.identifier == nil {
             reactions = data.reactions.filter { $0.orig_is_from_me && $0.reaction_type == 2006 }
         } else {
-            reactions = data.reactions.filter { !$0.orig_is_from_me && $0.orig_handle_id == entry.id && $0.reaction_type == 2006 }
+            reactions = data.reactions.filter { !$0.orig_is_from_me && $0.orig_identifier == entry.identifier && $0.reaction_type == 2006 }
         }
         var result: [String: Int] = [:]
         for r in reactions {
@@ -151,11 +151,13 @@ struct LeaderboardView: View {
 }
 
 struct LeaderboardEntry: Identifiable {
-    let id: Int
+    let identifier: String?  // nil = "Me"
     let name: String
     let reactionCounts: [Int: Int]  // reaction_type -> count
     let totalReactions: Int
     let messageCount: Int
+
+    var id: String { identifier ?? "__me__" }
 }
 
 struct LeaderboardEntryView: View {
@@ -218,7 +220,7 @@ struct LeaderboardEntryView: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(Color.primary.opacity(0.03))
+        .background(AppColors.cardBackground)
         .cornerRadius(6)
     }
 }

@@ -43,7 +43,7 @@ struct ContextMessagesView: View {
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: msg.isFromMe ? "arrow.up.circle" : "arrow.down.circle")
                                 .font(.caption)
-                                .foregroundStyle(msg.isFromMe ? .blue : .secondary)
+                                .foregroundStyle(msg.isFromMe ? AppColors.messageSent : AppColors.messageReceived)
 
                             VStack(alignment: .leading, spacing: 1) {
                                 HStack(spacing: 4) {
@@ -67,7 +67,7 @@ struct ContextMessagesView: View {
                         .padding(.vertical, 4)
                         .background(
                             msg.isHighlighted
-                                ? Color.yellow.opacity(0.45)
+                                ? AppColors.messageHighlight
                                 : Color.clear
                         )
                         .cornerRadius(4)

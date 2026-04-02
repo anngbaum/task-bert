@@ -212,15 +212,25 @@ function formatSearchResultsForLLM(resultsWithContext: { result: SearchResult; c
     const sender = r.is_from_me ? 'Me' : (r.sender ?? 'Unknown');
     const date = r.date ? new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Unknown date';
 
-    // Format context messages around the match
-    const contextLines = context.map(m => {
+    // Merge the matched message into the context timeline so it's not missing
+    const matchMsg: ContextMessage = { id: r.id, text: r.text, date: r.date, is_from_me: r.is_from_me, sender: r.sender ?? null };
+    const allMessages = [...context, matchMsg].sort((a, b) => {
+      if (a.date && b.date) return new Date(a.date).getTime() - new Date(b.date).getTime();
+      return a.id - b.id;
+    });
+    // Deduplicate (context query excludes the match, but just in case)
+    const seen = new Set<number>();
+    const deduped = allMessages.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
+
+    const contextLines = deduped.map(m => {
       const ctxSender = m.is_from_me ? 'Me' : (m.sender ?? 'Unknown');
+      const ctxDate = m.date ? new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
       const isMatch = m.id === r.id;
       const prefix = isMatch ? '>>>' : '   ';
-      return `${prefix} MSG-${m.id} | ${ctxSender}: ${m.text ?? '[no text]'}`;
+      return `${prefix} MSG-${m.id} | ${ctxSender} (${ctxDate}): ${m.text ?? '[no text]'}`;
     }).join('\n');
 
-    return `[${i + 1}] Match: MSG-${r.id} | ${sender} in "${r.chat_name ?? 'Unknown'}" (${date})\nConversation thread:\n${contextLines}`;
+    return `[${i + 1}] Match in "${r.chat_name ?? 'Unknown'}" (${date})\nConversation thread:\n${contextLines}`;
   }).join('\n\n---\n\n');
 }
 
@@ -369,6 +379,7 @@ RESPONSE FORMAT:
 - Include relevant quotes from messages to support your answer
 
 IMPORTANT:
+- Read message text carefully — the answer is often stated explicitly in the message content itself (e.g. dates, names, facts). Extract information directly from what people wrote rather than inferring from metadata.
 - Always cite your sources with [[MSG-ID]] references
 - Be specific about who said what and when
 - If the answer spans multiple conversations, organize by conversation/person

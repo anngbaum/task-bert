@@ -67,7 +67,7 @@ struct SettingsView: View {
                             Toggle(isOn: $viewModel.syncRemindersEnabled) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "checklist")
-                                        .foregroundStyle(.blue)
+                                        .foregroundStyle(AppColors.settingsSync)
                                     Text("Sync Reminders")
                                 }
                             }
@@ -98,7 +98,7 @@ struct SettingsView: View {
                                 Label("Refresh Tasks & Events", systemImage: "arrow.triangle.2.circlepath")
                             }
                             .buttonStyle(.plain)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppColors.settingsRefresh)
                             .font(.subheadline)
                             .disabled(viewModel.isSyncing)
 
@@ -108,7 +108,7 @@ struct SettingsView: View {
                                 Label("Hard Reset", systemImage: "arrow.counterclockwise.circle")
                             }
                             .buttonStyle(.plain)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(AppColors.settingsDestructive)
                             .font(.subheadline)
                             .disabled(viewModel.isSyncing)
                         }
@@ -116,7 +116,7 @@ struct SettingsView: View {
                         if let status = statusMessage {
                             Text(status)
                                 .font(.caption)
-                                .foregroundStyle(status.contains("Error") ? .red : .green)
+                                .foregroundStyle(status.contains("Error") ? AppColors.error : AppColors.success)
                         }
                     }
                 }
@@ -191,7 +191,7 @@ struct SettingsView: View {
                         onRemove()
                     }
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppColors.settingsDestructive)
                     .buttonStyle(.plain)
                 }
 

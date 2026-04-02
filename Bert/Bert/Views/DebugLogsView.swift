@@ -114,7 +114,7 @@ struct DebugLogsView: View {
 
             Text(log.message)
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(log.level == "error" ? .red : (log.level == "warn" ? .orange : .primary))
+                .foregroundStyle(log.level == "error" ? AppColors.logError : (log.level == "warn" ? AppColors.logWarning : .primary))
                 .textSelection(.enabled)
                 .lineLimit(3)
         }
@@ -135,8 +135,8 @@ struct DebugLogsView: View {
 
     private func levelColor(_ level: String) -> Color {
         switch level {
-        case "error": .red
-        case "warn": .orange
+        case "error": AppColors.logError
+        case "warn": AppColors.logWarning
         default: .secondary
         }
     }
