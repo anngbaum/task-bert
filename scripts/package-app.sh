@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Package Bert.app for distribution
 # Steps: bundle server → archive Xcode project → notarize → create DMG
-# Output: dist/Bert.dmg
+# Output: website/Bert.dmg
 #
 # Prerequisites:
 #   - Apple Developer account signed in to Xcode
@@ -14,7 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 XCODE_DIR="$PROJECT_DIR/Bert"
-DIST_DIR="$PROJECT_DIR/dist"
+DIST_DIR="$PROJECT_DIR/website"
 ARCHIVE_PATH="$PROJECT_DIR/build/Bert.xcarchive"
 EXPORT_PATH="$PROJECT_DIR/build/export"
 
@@ -315,3 +315,20 @@ echo "  1. Open Bert.dmg"
 echo "  2. Drag Bert to the Applications folder"
 echo "  3. Grant Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add Bert"
 echo "  4. Launch Bert"
+
+# --- Upload to GitHub Releases ---
+echo ""
+echo "--- Uploading to GitHub Releases ---"
+
+# Get version from Xcode project or use date-based tag
+VERSION="v$(date +%Y.%m.%d)"
+
+# Delete existing release with this tag if it exists, then create fresh
+gh release delete "$VERSION" --repo anngbaum/task-bert -y 2>/dev/null || true
+gh release create "$VERSION" "$DMG_PATH" \
+  --repo anngbaum/task-bert \
+  --title "Bert $VERSION" \
+  --notes "Bert for Mac — $DMG_SIZE" \
+  --latest
+
+echo "Release uploaded: https://github.com/anngbaum/task-bert/releases/tag/$VERSION"

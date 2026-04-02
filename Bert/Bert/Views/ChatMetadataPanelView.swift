@@ -61,7 +61,7 @@ struct ChatMetadataRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(alignment: .top) {
                 Label(metadata.chat_name ?? "Unknown Chat", systemImage: "bubble.left")
                     .font(.caption)
                     .fontWeight(.medium)
@@ -71,13 +71,13 @@ struct ChatMetadataRowView: View {
                     Button {
                         onLeaderboard?()
                     } label: {
-                        HStack(spacing: 3) {
+                        HStack(alignment: .center, spacing: 3) {
                             Image(systemName: "chart.bar")
                                 .font(.caption2)
                             Text("Leaderboard")
                                 .font(.caption2)
                         }
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(.blue)
                     }
                     .buttonStyle(.plain)
                     .help("See reaction leaderboard")

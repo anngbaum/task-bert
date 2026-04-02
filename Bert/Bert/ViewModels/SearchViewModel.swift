@@ -24,6 +24,10 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var hasSearched: Bool = false
 
+    // Data range
+    @Published private(set) var dataRangeEarliest: String? = nil
+    @Published private(set) var dataRangeDaysCovered: Int? = nil
+
     // Contacts & groups for typeahead
     @Published private(set) var contacts: [Contact] = []
     @Published private(set) var groups: [GroupChat] = []
@@ -124,6 +128,7 @@ final class SearchViewModel: ObservableObject {
         Task {
             await loadContacts()
             await loadGroups()
+            await loadDataRange()
             await checkApiKeyStatus()
             await pollServerSyncStatus()
         }
@@ -382,7 +387,7 @@ final class SearchViewModel: ObservableObject {
             hasMore = response.hasMore
         } catch is URLError {
             results = []
-            errorMessage = "Cannot connect to server. Make sure `npm run serve` is running."
+            errorMessage = "Cannot connect to server."
         } catch {
             results = []
             errorMessage = error.localizedDescription
@@ -441,6 +446,17 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
+    @MainActor
+    func loadDataRange() async {
+        do {
+            let range = try await service.fetchDataRange()
+            dataRangeEarliest = range.earliest
+            dataRangeDaysCovered = range.days_covered
+        } catch {
+            // Silently fail
+        }
+    }
+
     // MARK: - Sync
 
     @MainActor
@@ -454,6 +470,7 @@ final class SearchViewModel: ObservableObject {
             lastSyncedAt = Date()
             await loadContacts()
             await loadGroups()
+            await loadDataRange()
             await loadChatMetadata()
             await loadActions()
         } catch is URLError {
@@ -564,7 +581,7 @@ final class SearchViewModel: ObservableObject {
         do {
             threadResponse = try await service.fetchThread(messageId: messageId)
         } catch is URLError {
-            threadError = "Cannot connect to server. Make sure `npm run serve` is running."
+            threadError = "Cannot connect to server."
         } catch {
             threadError = error.localizedDescription
         }
@@ -797,6 +814,22 @@ final class SearchViewModel: ObservableObject {
             keyEvents.removeAll { $0.id == id }
         } catch {
             // Silently fail — user can retry
+        }
+    }
+
+    @MainActor
+    func updateEvent(id: Int, title: String, date: Date?, location: String?) async {
+        // Optimistic update
+        if let idx = keyEvents.firstIndex(where: { $0.id == id }) {
+            keyEvents[idx].title = title
+            keyEvents[idx].date = date
+            keyEvents[idx].location = location
+        }
+        do {
+            try await service.updateEvent(id: id, title: title, date: date, location: location)
+        } catch {
+            // Revert on failure
+            await loadActions()
         }
     }
 

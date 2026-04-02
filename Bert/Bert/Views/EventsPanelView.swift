@@ -3,27 +3,13 @@ import EventKit
 
 struct EventsPanelView: View {
     @ObservedObject var viewModel: SearchViewModel
-    @State private var expandedSections: Set<String> = ["thisWeek", "upcoming"]
+    @State private var showPastEvents = false
     @State private var showRemovedEvents = false
 
-    private var thisWeekEvents: [KeyEvent] {
-        let now = Date()
-        let weekFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
+    private var futureEvents: [KeyEvent] {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
         return viewModel.keyEvents
-            .filter { event in
-                guard let date = event.date else { return false }
-                return date >= Calendar.current.startOfDay(for: now) && date < weekFromNow
-            }
-            .sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
-    }
-
-    private var upcomingEvents: [KeyEvent] {
-        let weekFromNow = Calendar.current.date(byAdding: .day, value: 7, to: Date())!
-        return viewModel.keyEvents
-            .filter { event in
-                guard let date = event.date else { return true } // no date → upcoming
-                return date >= weekFromNow
-            }
+            .filter { ($0.date ?? .distantFuture) >= startOfToday }
             .sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
     }
 
@@ -35,6 +21,41 @@ struct EventsPanelView: View {
                 return date < startOfToday
             }
             .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
+
+    /// Group events by calendar day
+    private func groupByDay(_ events: [KeyEvent]) -> [(label: String, events: [KeyEvent])] {
+        let cal = Calendar.current
+        var groups: [(key: Date?, label: String, events: [KeyEvent])] = []
+
+        for event in events {
+            let dayStart = event.date.map { cal.startOfDay(for: $0) }
+            let label = dayLabel(for: event.date)
+
+            if groups.isEmpty || dayStart != groups.last!.key {
+                groups.append((key: dayStart, label: label, events: [event]))
+            } else {
+                groups[groups.count - 1].events.append(event)
+            }
+        }
+
+        return groups.map { (label: $0.label, events: $0.events) }
+    }
+
+    private func dayLabel(for date: Date?) -> String {
+        guard let date else { return "No Date" }
+        let cal = Calendar.current
+        if cal.isDateInToday(date) {
+            return "Today"
+        } else if cal.isDateInTomorrow(date) {
+            return "Tomorrow"
+        } else if cal.isDateInYesterday(date) {
+            return "Yesterday"
+        } else {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "EEEE MMM d"  // "Sunday Apr 5"
+            return fmt.string(from: date)
+        }
     }
 
     var body: some View {
@@ -63,34 +84,16 @@ struct EventsPanelView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        // This Week
-                        if !thisWeekEvents.isEmpty {
-                            CollapsibleSection(
-                                title: "This Week",
-                                icon: "calendar",
-                                color: .orange,
-                                count: thisWeekEvents.count,
-                                isExpanded: expandedSections.contains("thisWeek"),
-                                onToggle: { toggleSection("thisWeek") }
-                            ) {
-                                ForEach(thisWeekEvents) { event in
-                                    EventRowView(event: event, viewModel: viewModel)
-                                }
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(groupByDay(futureEvents), id: \.label) { group in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(group.label)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.leading, 2)
 
-                        // Upcoming
-                        if !upcomingEvents.isEmpty {
-                            CollapsibleSection(
-                                title: "Upcoming",
-                                icon: "calendar.badge.clock",
-                                color: .purple,
-                                count: upcomingEvents.count,
-                                isExpanded: expandedSections.contains("upcoming"),
-                                onToggle: { toggleSection("upcoming") }
-                            ) {
-                                ForEach(upcomingEvents) { event in
+                                ForEach(group.events) { event in
                                     EventRowView(event: event, viewModel: viewModel)
                                 }
                             }
@@ -103,11 +106,25 @@ struct EventsPanelView: View {
                                 icon: "clock.arrow.circlepath",
                                 color: .secondary,
                                 count: pastEvents.count,
-                                isExpanded: expandedSections.contains("past"),
-                                onToggle: { toggleSection("past") }
+                                isExpanded: showPastEvents,
+                                onToggle: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        showPastEvents.toggle()
+                                    }
+                                }
                             ) {
-                                ForEach(pastEvents) { event in
-                                    EventRowView(event: event, viewModel: viewModel)
+                                ForEach(groupByDay(pastEvents), id: \.label) { group in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(group.label)
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.leading, 2)
+
+                                        ForEach(group.events) { event in
+                                            EventRowView(event: event, viewModel: viewModel)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -150,219 +167,6 @@ struct EventsPanelView: View {
                 await viewModel.loadActions()
                 await viewModel.loadCompletedActions()
             }
-        }
-    }
-
-    private func toggleSection(_ key: String) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            if expandedSections.contains(key) {
-                expandedSections.remove(key)
-            } else {
-                expandedSections.insert(key)
-            }
-        }
-    }
-}
-
-// MARK: - Event Card (with Remind Me + Calendar buttons)
-
-struct EventCardView: View {
-    let event: KeyEvent
-    let viewModel: SearchViewModel
-    @State private var isDeleted = false
-    @State private var calendarMessage: String?
-    @State private var showCalendarPopover = false
-    @State private var showRemindForm = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(event.title)
-                    .font(.callout)
-                    .lineLimit(3)
-
-                HStack(spacing: 8) {
-                    if let date = event.date {
-                        Label(eventDateText(date), systemImage: "calendar")
-                            .font(.caption2)
-                            .foregroundStyle(.purple)
-                    }
-                    if let chatName = event.chat_name {
-                        Label(chatName, systemImage: "bubble.left")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                if let location = event.location, !location.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Label(location, systemImage: "mappin")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                if let msg = calendarMessage {
-                    Text(msg)
-                        .font(.caption2)
-                        .foregroundStyle(msg.contains("Failed") || msg.contains("denied") ? .red : .green)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            // Remind Me button
-            Button {
-                showRemindForm = true
-            } label: {
-                Image(systemName: "bell.badge")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.orange)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Create a reminder task")
-
-            // Add to Calendar
-            if event.date != nil {
-                Button {
-                    showCalendarPopover = true
-                } label: {
-                    Image(systemName: "calendar.badge.plus")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.purple)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Add to Calendar")
-                .popover(isPresented: $showCalendarPopover, arrowEdge: .trailing) {
-                    CalendarPopoverView(
-                        event: event,
-                        onAddApple: {
-                            showCalendarPopover = false
-                            addToAppleCalendar()
-                        },
-                        onAddGoogle: {
-                            showCalendarPopover = false
-                            openGoogleCalendar()
-                        }
-                    )
-                }
-            }
-
-            // Remove
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isDeleted = true
-                }
-                Task {
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                    await viewModel.deleteEvent(id: event.id)
-                }
-            } label: {
-                Image(systemName: "xmark.circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Remove event")
-        }
-        .opacity(isDeleted ? 0.3 : 1)
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(Color.primary.opacity(0.03))
-        .cornerRadius(8)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if let messageId = event.message_id {
-                Task { await viewModel.openThread(for: messageId) }
-            }
-        }
-        .sheet(isPresented: $showRemindForm) {
-            RemindMeFormView(event: event, viewModel: viewModel)
-        }
-    }
-
-    // MARK: - Calendar helpers (same as original EventRowView)
-
-    private func addToAppleCalendar() {
-        guard let date = event.date else { return }
-        let store = EKEventStore()
-
-        let saveEvent = {
-            let calEvent = EKEvent(eventStore: store)
-            calEvent.title = event.title
-            calEvent.startDate = date
-            calEvent.endDate = date.addingTimeInterval(3600)
-            calEvent.location = event.location
-            calEvent.calendar = store.defaultCalendarForNewEvents
-            do {
-                try store.save(calEvent, span: .thisEvent)
-                DispatchQueue.main.async {
-                    calendarMessage = "Added to Calendar"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        calendarMessage = nil
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    calendarMessage = "Failed to add"
-                }
-            }
-        }
-
-        let handleDenied = {
-            DispatchQueue.main.async {
-                calendarMessage = "Calendar access denied"
-            }
-        }
-
-        if #available(macOS 14.0, *) {
-            store.requestFullAccessToEvents { granted, error in
-                guard granted, error == nil else { handleDenied(); return }
-                saveEvent()
-            }
-        } else {
-            store.requestAccess(to: .event) { granted, error in
-                guard granted, error == nil else { handleDenied(); return }
-                saveEvent()
-            }
-        }
-    }
-
-    private func openGoogleCalendar() {
-        guard let date = event.date else { return }
-        let endDate = date.addingTimeInterval(3600)
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyyMMdd'T'HHmmss"
-        fmt.timeZone = .current
-
-        var components = URLComponents(string: "https://calendar.google.com/calendar/render")!
-        components.queryItems = [
-            URLQueryItem(name: "action", value: "TEMPLATE"),
-            URLQueryItem(name: "text", value: event.title),
-            URLQueryItem(name: "dates", value: "\(fmt.string(from: date))/\(fmt.string(from: endDate))"),
-            URLQueryItem(name: "ctz", value: TimeZone.current.identifier),
-        ]
-        if let location = event.location {
-            components.queryItems?.append(URLQueryItem(name: "location", value: location))
-        }
-        if let url = components.url {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    private func eventDateText(_ date: Date) -> String {
-        let cal = Calendar.current
-        if cal.isDateInToday(date) {
-            return "Today"
-        } else if cal.isDateInTomorrow(date) {
-            return "Tomorrow"
-        } else {
-            return date.dayFormatted
         }
     }
 }

@@ -285,8 +285,9 @@ struct DataRangeBannerView: View {
                     Text("Import from:")
                         .font(.caption2)
                     DatePicker("", selection: $selectedDate, in: ...Date(), displayedComponents: .date)
+                        .datePickerStyle(.field)
                         .labelsHidden()
-                        .controlSize(.small)
+                        .frame(minWidth: 110)
                     Button {
                         Task { await importMore() }
                     } label: {

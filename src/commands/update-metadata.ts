@@ -558,9 +558,6 @@ Only create tasks where Me has a clear obligation or someone is clearly waiting 
 4. **Waiting on others** — Me asked a question or made a request and is waiting for their reply.
    → type: "waiting"
 
-5. **Concrete future follow-ups** — Me and someone made a specific plan to do something in the future (e.g. "let's do a bakery crawl this spring", "we should get dinner when you're in town"). These MUST have a date — estimate from context (e.g. "this spring" → late April, "next month" → mid next month). If you can't estimate a reasonable date, don't create the task.
-   → type: "action", priority: "low", date: estimated future date, trigger_hint: what would make it relevant
-
 ## WHAT IS NOT A TASK
 
 - A general ask in a group chat that is not directed at Me

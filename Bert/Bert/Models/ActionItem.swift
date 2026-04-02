@@ -4,9 +4,9 @@ struct KeyEvent: Identifiable, Decodable {
     let id: Int
     let chat_id: Int
     let message_id: Int?
-    let title: String
-    let date: Date?
-    let location: String?
+    var title: String
+    var date: Date?
+    var location: String?
     let removed: Bool?
     let created_at: Date
     let chat_name: String?

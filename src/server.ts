@@ -623,6 +623,69 @@ const server = http.createServer(async (req, res) => {
           }
           break;
         }
+        case '/api/events/update': {
+          const updateBody = await readBody(req);
+          let updateParsed: { id?: number; title?: string; date?: string | null; location?: string | null };
+          try {
+            updateParsed = JSON.parse(updateBody);
+          } catch {
+            errorResponse(res, 'Invalid JSON body');
+            break;
+          }
+          if (!updateParsed.id) {
+            errorResponse(res, 'Missing required field: id');
+            break;
+          }
+          try {
+            const db = await getPglite();
+            const sets: string[] = [];
+            const values: any[] = [];
+            let idx = 1;
+            if (updateParsed.title !== undefined) {
+              sets.push(`title = $${idx++}`);
+              values.push(updateParsed.title);
+            }
+            if (updateParsed.date !== undefined) {
+              sets.push(`date = $${idx++}`);
+              values.push(updateParsed.date);
+            }
+            if (updateParsed.location !== undefined) {
+              sets.push(`location = $${idx++}`);
+              values.push(updateParsed.location);
+            }
+            if (sets.length === 0) {
+              errorResponse(res, 'No fields to update');
+              break;
+            }
+            values.push(updateParsed.id);
+            await db.query(`UPDATE key_events SET ${sets.join(', ')} WHERE id = $${idx}`, values);
+            jsonResponse(res, { ok: true });
+          } catch (err) {
+            errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
+        case '/api/events/message': {
+          const msgEventId = params.get('id');
+          if (!msgEventId) {
+            errorResponse(res, 'Missing required parameter: id');
+            break;
+          }
+          try {
+            const db = await getPglite();
+            const result = await db.query(
+              `SELECT m.text FROM message m
+               JOIN key_events ke ON ke.message_id = m.id
+               WHERE ke.id = $1`,
+              [parseInt(msgEventId, 10)]
+            );
+            const text = result.rows.length > 0 ? (result.rows[0] as any).text : null;
+            jsonResponse(res, { text });
+          } catch (err) {
+            errorResponse(res, (err as Error).message, 500);
+          }
+          break;
+        }
         case '/api/agent': {
           const body = await readBody(req);
           let parsed: { query?: string };
@@ -777,6 +840,29 @@ const server = http.createServer(async (req, res) => {
           progress: syncInProgress ? getSyncProgress() : undefined,
         });
         break;
+      case '/api/data-range': {
+        try {
+          const db = await getPglite();
+          const earliest = await db.query('SELECT MIN(date) as earliest FROM message WHERE date IS NOT NULL');
+          const latest = await db.query('SELECT MAX(date) as latest FROM message WHERE date IS NOT NULL');
+          const count = await db.query('SELECT count(*) as cnt FROM message');
+          const earliestDate = (earliest.rows[0] as any)?.earliest ?? null;
+          const latestDate = (latest.rows[0] as any)?.latest ?? null;
+          let daysCovered: number | null = null;
+          if (earliestDate && latestDate) {
+            daysCovered = Math.round((new Date(latestDate).getTime() - new Date(earliestDate).getTime()) / (1000 * 60 * 60 * 24));
+          }
+          jsonResponse(res, {
+            earliest: earliestDate ? new Date(earliestDate).toISOString().split('T')[0] : null,
+            latest: latestDate ? new Date(latestDate).toISOString().split('T')[0] : null,
+            days_covered: daysCovered,
+            total_messages: parseInt((count.rows[0] as any)?.cnt ?? '0', 10),
+          });
+        } catch (err) {
+          errorResponse(res, (err as Error).message, 500);
+        }
+        break;
+      }
       case '/api/search':
         await handleSearch(params, res);
         break;
@@ -974,18 +1060,6 @@ const server = http.createServer(async (req, res) => {
         } catch (err) {
           errorResponse(res, (err as Error).message, 500);
         }
-        break;
-      }
-      case '/api/data-range': {
-        const db = await getPglite();
-        const earliest = await db.query('SELECT MIN(date) as earliest FROM message WHERE date IS NOT NULL');
-        const latest = await db.query('SELECT MAX(date) as latest FROM message WHERE date IS NOT NULL');
-        const count = await db.query('SELECT count(*) as cnt FROM message');
-        jsonResponse(res, {
-          earliest_message: (earliest.rows[0] as any)?.earliest ?? null,
-          latest_message: (latest.rows[0] as any)?.latest ?? null,
-          total_messages: parseInt((count.rows[0] as any)?.cnt ?? '0', 10),
-        });
         break;
       }
       default:

@@ -50,9 +50,9 @@ struct ActionsPanelView: View {
                                 bucket: "todo",
                                 title: "To Do",
                                 icon: "checklist",
-                                color: .orange,
+                                color: .green,
                                 tasks: todoTasks,
-                                accentColor: { _ in .orange }
+                                accentColor: { _ in .green }
                             )
 
                             // Upcoming
@@ -60,9 +60,9 @@ struct ActionsPanelView: View {
                                 bucket: "upcoming",
                                 title: "Upcoming",
                                 icon: "calendar.badge.clock",
-                                color: .purple,
+                                color: .orange,
                                 tasks: upcomingTasks,
-                                accentColor: { _ in .purple }
+                                accentColor: { _ in .orange }
                             )
 
                             // Waiting
@@ -424,6 +424,7 @@ struct EventRowView: View {
     @State private var isDeleted = false
     @State private var calendarMessage: String?
     @State private var showCalendarPopover = false
+    @State private var showEditForm = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -432,18 +433,11 @@ struct EventRowView: View {
                     .font(.caption)
                     .lineLimit(2)
 
-                HStack(spacing: 8) {
-                    if let date = event.date {
-                        Label(eventDateText(date), systemImage: "calendar")
-                            .font(.caption2)
-                            .foregroundStyle(.purple)
-                    }
-                    if let chatName = event.chat_name {
-                        Label(chatName, systemImage: "bubble.left")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                if let chatName = event.chat_name {
+                    Label(chatName, systemImage: "bubble.left")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 if let location = event.location, !location.trimmingCharacters(in: .whitespaces).isEmpty {
                     Label(location, systemImage: "mappin")
@@ -460,6 +454,18 @@ struct EventRowView: View {
             }
 
             Spacer(minLength: 0)
+
+            Button {
+                showEditForm = true
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Edit event")
 
             if event.date != nil {
                 Button {
@@ -516,6 +522,9 @@ struct EventRowView: View {
             if let messageId = event.message_id {
                 Task { await viewModel.openThread(for: messageId) }
             }
+        }
+        .sheet(isPresented: $showEditForm) {
+            EditEventFormView(event: event, viewModel: viewModel)
         }
     }
 
@@ -722,5 +731,125 @@ struct RemovedEventRowView: View {
         }
         .padding(.vertical, 3)
         .padding(.horizontal, 6)
+    }
+}
+
+// MARK: - Edit Event Form
+
+struct EditEventFormView: View {
+    let event: KeyEvent
+    let viewModel: SearchViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var title: String = ""
+    @State private var hasDate: Bool = false
+    @State private var date: Date = Date()
+    @State private var location: String = ""
+    @State private var messageText: String? = nil
+    @State private var isSaving = false
+
+    private let service = SearchService()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Edit Event")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Title")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("Event title", text: $title)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Date", isOn: $hasDate)
+                    .toggleStyle(.switch)
+
+                if hasDate {
+                    DatePicker("", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                        .labelsHidden()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Location")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("Location (optional)", text: $location)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            // Referenced message (read-only)
+            if let messageText, !messageText.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Referenced message")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(messageText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                        .textSelection(.enabled)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03))
+                .cornerRadius(6)
+            }
+
+            if let chatName = event.chat_name {
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.left")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(chatName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Save") {
+                    isSaving = true
+                    Task {
+                        let trimmedLocation = location.trimmingCharacters(in: .whitespacesAndNewlines)
+                        await viewModel.updateEvent(
+                            id: event.id,
+                            title: title,
+                            date: hasDate ? date : nil,
+                            location: trimmedLocation.isEmpty ? nil : trimmedLocation
+                        )
+                        dismiss()
+                    }
+                }
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 400, height: 420)
+        .onAppear {
+            title = event.title
+            if let eventDate = event.date {
+                hasDate = true
+                date = eventDate
+            }
+            location = event.location ?? ""
+
+            // Fetch the referenced message text
+            Task {
+                messageText = try? await service.fetchEventMessage(eventId: event.id)
+            }
+        }
     }
 }

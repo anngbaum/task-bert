@@ -20,6 +20,10 @@ struct ResultsListView: View {
                     Text(error)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    Button("Retry") {
+                        Task { await viewModel.search() }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()

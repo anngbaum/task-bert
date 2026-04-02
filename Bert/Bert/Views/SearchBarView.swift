@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SearchBarView: View {
     @ObservedObject var viewModel: SearchViewModel
+    @State private var selectedTypeaheadIndex: Int = -1
+    @State private var showImportMore: Bool = false
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -21,6 +23,8 @@ struct SearchBarView: View {
 
             // Row 2: filter chips + time controls
             HStack(spacing: 8) {
+                allTimeButton
+
                 // Time preset buttons
                 ForEach(TimePreset.allCases) { preset in
                     timePresetButton(preset)
@@ -68,8 +72,9 @@ struct SearchBarView: View {
                                 viewModel.filters.timePreset = matchingPreset()
                             }
                         ), displayedComponents: .date)
+                        .datePickerStyle(.field)
                         .labelsHidden()
-                        .controlSize(.small)
+                        .frame(minWidth: 110)
                     }
 
                     HStack(spacing: 4) {
@@ -81,8 +86,9 @@ struct SearchBarView: View {
                                 viewModel.filters.timePreset = matchingPreset()
                             }
                         ), displayedComponents: .date)
+                        .datePickerStyle(.field)
                         .labelsHidden()
-                        .controlSize(.small)
+                        .frame(minWidth: 110)
                     }
 
                     Button {
@@ -98,11 +104,48 @@ struct SearchBarView: View {
                     Spacer()
                 }
             }
+
+            // Import more section
+            if let earliest = viewModel.dataRangeEarliest, let days = viewModel.dataRangeDaysCovered {
+                HStack(spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { showImportMore.toggle() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 8))
+                                .rotationEffect(.degrees(showImportMore ? 90 : 0))
+                            Text("Import More")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+
+                if showImportMore {
+                    DataRangeBannerView(earliest: earliest, daysCovered: days, noResults: false)
+                }
+            }
+        }
+        .onChange(of: viewModel.showTypeahead) { visible in
+            EscapeKeyMonitor.typeaheadVisible = visible
         }
         .onReceive(NotificationCenter.default.publisher(for: .escapeKeyPressed)) { _ in
             if viewModel.showTypeahead {
                 viewModel.dismissTypeahead()
+                selectedTypeaheadIndex = -1
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .arrowDownPressed)) { _ in
+            guard viewModel.showTypeahead, !viewModel.typeaheadSuggestions.isEmpty else { return }
+            selectedTypeaheadIndex = min(selectedTypeaheadIndex + 1, viewModel.typeaheadSuggestions.count - 1)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .arrowUpPressed)) { _ in
+            guard viewModel.showTypeahead, !viewModel.typeaheadSuggestions.isEmpty else { return }
+            selectedTypeaheadIndex = max(selectedTypeaheadIndex - 1, 0)
         }
         .background(EscapeKeyMonitor())
     }
@@ -131,11 +174,17 @@ struct SearchBarView: View {
             TextField("Search… (with: sent_by: in:)", text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .onSubmit {
-                    viewModel.dismissTypeahead()
-                    Task { await viewModel.search() }
+                    if viewModel.showTypeahead && selectedTypeaheadIndex >= 0 && selectedTypeaheadIndex < viewModel.typeaheadSuggestions.count {
+                        viewModel.selectTypeaheadSuggestion(viewModel.typeaheadSuggestions[selectedTypeaheadIndex])
+                        selectedTypeaheadIndex = -1
+                    } else {
+                        viewModel.dismissTypeahead()
+                        Task { await viewModel.search() }
+                    }
                 }
                 .onChange(of: viewModel.query) { _ in
                     viewModel.updateTypeahead()
+                    selectedTypeaheadIndex = -1
                 }
 
             if !viewModel.query.isEmpty || viewModel.filters.isActive {
@@ -161,9 +210,10 @@ struct SearchBarView: View {
 
     private var typeaheadDropdown: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(viewModel.typeaheadSuggestions) { suggestion in
+            ForEach(Array(viewModel.typeaheadSuggestions.enumerated()), id: \.element.id) { index, suggestion in
                 Button {
                     viewModel.selectTypeaheadSuggestion(suggestion)
+                    selectedTypeaheadIndex = -1
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: suggestion.icon)
@@ -185,7 +235,7 @@ struct SearchBarView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .background(Color.primary.opacity(0.05))
+                .background(index == selectedTypeaheadIndex ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
             }
         }
         .frame(width: 260)
@@ -214,6 +264,26 @@ struct SearchBarView: View {
         .padding(.vertical, 3)
         .background(Color.accentColor.opacity(0.15))
         .clipShape(Capsule())
+    }
+
+    private var isAllTime: Bool {
+        viewModel.filters.timePreset == nil && !viewModel.filters.isCustomDateRange
+    }
+
+    private var allTimeButton: some View {
+        let daysLabel = viewModel.dataRangeDaysCovered.map { " (\($0)d)" } ?? ""
+        return Button {
+            viewModel.filters.clearDates()
+        } label: {
+            Text("All Time\(daysLabel)")
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(isAllTime ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05))
+                .foregroundStyle(isAllTime ? Color.accentColor : .primary)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private func timePresetButton(_ preset: TimePreset) -> some View {
@@ -276,14 +346,31 @@ struct SearchBarView: View {
 
 extension Notification.Name {
     static let escapeKeyPressed = Notification.Name("escapeKeyPressed")
+    static let arrowDownPressed = Notification.Name("arrowDownPressed")
+    static let arrowUpPressed = Notification.Name("arrowUpPressed")
 }
 
 struct EscapeKeyMonitor: NSViewRepresentable {
+    static var typeaheadVisible = false
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 { // Escape key
+            switch event.keyCode {
+            case 53: // Escape
                 NotificationCenter.default.post(name: .escapeKeyPressed, object: nil)
+            case 125: // Down arrow
+                if Self.typeaheadVisible {
+                    NotificationCenter.default.post(name: .arrowDownPressed, object: nil)
+                    return nil // consume so cursor doesn't move in text field
+                }
+            case 126: // Up arrow
+                if Self.typeaheadVisible {
+                    NotificationCenter.default.post(name: .arrowUpPressed, object: nil)
+                    return nil
+                }
+            default:
+                break
             }
             return event
         }

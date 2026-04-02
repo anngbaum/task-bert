@@ -4,7 +4,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     case actions = "Tasks"
     case events = "Events"
     case conversations = "Recent Conversations"
-    case search = "Search Messages"
+    case search = "Search"
     case agent = "Ask"
 
     var id: String { rawValue }
@@ -188,8 +188,11 @@ struct ContentView: View {
                 if tab == .conversations && !viewModel.chatMetadata.isEmpty {
                     badgeView(count: viewModel.chatMetadata.count, color: .blue)
                 }
-                if tab == .actions && !viewModel.tasks.isEmpty {
-                    badgeView(count: viewModel.tasks.count, color: .orange)
+                if tab == .actions {
+                    let todoCount = viewModel.tasks.filter { $0.resolvedBucket == "todo" }.count
+                    if todoCount > 0 {
+                        badgeView(count: todoCount, color: .green)
+                    }
                 }
                 if tab == .events && !viewModel.keyEvents.isEmpty {
                     badgeView(count: viewModel.keyEvents.count, color: .purple)
@@ -358,7 +361,7 @@ struct OnboardingView: View {
                 try await viewModel.updateSettings(updates)
                 viewModel.hasApiKey = true
             } catch {
-                errorMessage = "Failed to save API key. Make sure the server is running."
+                errorMessage = "Failed to save API key. The server may still be starting — try again in a moment."
                 isSaving = false
                 return
             }

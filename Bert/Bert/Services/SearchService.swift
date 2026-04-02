@@ -190,6 +190,23 @@ actor SearchService {
         }
     }
 
+    struct DataRangeResponse: Decodable {
+        let earliest: String?
+        let latest: String?
+        let days_covered: Int?
+        let total_messages: Int?
+    }
+
+    func fetchDataRange() async throws -> DataRangeResponse {
+        let url = baseURL.appendingPathComponent("api/data-range")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+        return try decoder.decode(DataRangeResponse.self, from: data)
+    }
+
     func fetchHealth() async throws -> HealthResponse {
         let url = baseURL.appendingPathComponent("health")
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -334,6 +351,39 @@ actor SearchService {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
         }
+    }
+
+    func updateEvent(id: Int, title: String, date: Date?, location: String?) async throws {
+        let url = baseURL.appendingPathComponent("api/events/update")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: Any] = ["id": id, "title": title]
+        if let date {
+            body["date"] = ISO8601DateFormatter().string(from: date)
+        } else {
+            body["date"] = NSNull()
+        }
+        body["location"] = location ?? NSNull()
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+    }
+
+    func fetchEventMessage(eventId: Int) async throws -> String? {
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/events/message"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "id", value: String(eventId))]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            return nil
+        }
+        let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return result?["text"] as? String
     }
 
     func createTask(title: String, date: Date?, priority: String, chatId: Int?) async throws {
@@ -577,7 +627,7 @@ enum SearchError: LocalizedError {
         case .serverError(let code):
             "Server returned status \(code)"
         case .serverUnavailable:
-            "Cannot connect to server. Is `npm run serve` running?"
+            "Cannot connect to server."
         }
     }
 }
