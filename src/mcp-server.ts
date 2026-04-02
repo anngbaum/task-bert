@@ -8,19 +8,53 @@
  * Proxies to the local HTTP API at localhost:11488.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
 const API_BASE = 'http://localhost:11488';
 
+// --- Auth token ---
+function loadAuthToken(): string | null {
+  const dataDir = process.env.DATA_DIR
+    || path.join(os.homedir(), 'Library', 'Application Support', 'Bert');
+  const tokenPath = path.join(dataDir, 'auth-token');
+  try {
+    return fs.readFileSync(tokenPath, 'utf-8').trim();
+  } catch {
+    return null;
+  }
+}
+
+let authToken = loadAuthToken();
+
+function authHeaders(): Record<string, string> {
+  // Reload token if we don't have one yet (server may not have started when MCP launched)
+  if (!authToken) authToken = loadAuthToken();
+  const headers: Record<string, string> = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  return headers;
+}
+
 async function apiGet(path: string, params: Record<string, string> = {}): Promise<any> {
   const url = new URL(path, API_BASE);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== '') url.searchParams.set(k, v);
   }
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  const res = await fetch(url.toString(), { headers: authHeaders() });
+  if (!res.ok) {
+    // If unauthorized, try reloading the token (server may have restarted)
+    if (res.status === 401) {
+      authToken = loadAuthToken();
+      const retry = await fetch(url.toString(), { headers: authHeaders() });
+      if (!retry.ok) throw new Error(`API error ${retry.status}: ${await retry.text()}`);
+      return retry.json();
+    }
+    throw new Error(`API error ${res.status}: ${await res.text()}`);
+  }
   return res.json();
 }
 
@@ -31,10 +65,22 @@ async function apiPost(path: string, body?: any, params: Record<string, string> 
   }
   const res = await fetch(url.toString(), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    if (res.status === 401) {
+      authToken = loadAuthToken();
+      const retry = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!retry.ok) throw new Error(`API error ${retry.status}: ${await retry.text()}`);
+      return retry.json();
+    }
+    throw new Error(`API error ${res.status}: ${await res.text()}`);
+  }
   return res.json();
 }
 
@@ -46,7 +92,7 @@ async function callAgent(query: string): Promise<{ answer: string; message_links
   const url = new URL('/api/agent', API_BASE);
   const res = await fetch(url.toString(), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ query }),
   });
   if (!res.ok) throw new Error(`Agent API error ${res.status}: ${await res.text()}`);

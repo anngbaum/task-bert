@@ -748,7 +748,7 @@ struct EditEventFormView: View {
     @State private var messageText: String? = nil
     @State private var isSaving = false
 
-    private let service = SearchService()
+    private let service = APIClient()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

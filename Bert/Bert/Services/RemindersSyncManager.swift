@@ -5,7 +5,7 @@ final class RemindersSyncManager: @unchecked Sendable {
     static let shared = RemindersSyncManager()
 
     private let store = EKEventStore()
-    private let service = SearchService()
+    private let service = APIClient()
     private let listName = "Bert"
     private var observer: NSObjectProtocol?
 

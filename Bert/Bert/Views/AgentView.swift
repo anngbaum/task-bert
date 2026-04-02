@@ -90,15 +90,15 @@ struct AgentView: View {
 // MARK: - Agent Response View
 
 struct AgentResponseView: View {
-    let response: SearchService.AgentResponse
+    let response: APIClient.AgentResponse
     let viewModel: SearchViewModel
     let steps: [AgentProgressStep]
     @State private var showSteps = false
 
     /// Ordered, deduplicated list of MSG-IDs as they appear in the answer
-    private var referencedLinks: [(index: Int, link: SearchService.AgentMessageLink)] {
+    private var referencedLinks: [(index: Int, link: APIClient.AgentMessageLink)] {
         var seen = Set<Int>()
-        var result: [(Int, SearchService.AgentMessageLink)] = []
+        var result: [(Int, APIClient.AgentMessageLink)] = []
         // Walk the answer to find [[MSG-ID]] in order
         let pattern = #"\[\[MSG-(\d+)\]\]"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
@@ -316,7 +316,7 @@ struct DataRangeBannerView: View {
         progressMessage = "Starting import..."
 
         do {
-            let service = SearchService()
+            let service = APIClient()
             try await service.startImportOlderMessages(since: selectedDate)
 
             while true {
@@ -534,7 +534,7 @@ struct AgentStepRow: View {
 // MARK: - Message Link Row
 
 struct MessageLinkRow: View {
-    let link: SearchService.AgentMessageLink
+    let link: APIClient.AgentMessageLink
     let footnote: Int
     let onTap: () -> Void
 

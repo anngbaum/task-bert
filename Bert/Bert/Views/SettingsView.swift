@@ -9,7 +9,7 @@ struct SettingsView: View {
     @State private var actionsModel: String = ""
     @State private var summaryModel: String = ""
     @State private var askModel: String = ""
-    @State private var models: [SearchService.ModelOption] = []
+    @State private var models: [APIClient.ModelOption] = []
     @State private var maskedAnthropicKey: String? = nil
     @State private var maskedOpenaiKey: String? = nil
     @State private var isSaving: Bool = false
@@ -19,7 +19,7 @@ struct SettingsView: View {
     @State private var showHardResetConfirm: Bool = false
     @State private var showSoftResetConfirm: Bool = false
 
-    private var availableModels: [SearchService.ModelOption] {
+    private var availableModels: [APIClient.ModelOption] {
         models.filter { $0.available }
     }
 
@@ -261,8 +261,13 @@ struct SettingsView: View {
             async let modelsReq = viewModel.fetchModels()
             let (settings, fetchedModels) = try await (settingsReq, modelsReq)
 
-            maskedAnthropicKey = settings.anthropicApiKey
-            maskedOpenaiKey = settings.openaiApiKey
+            // Show masked keys from Keychain (not from server)
+            if let key = KeychainManager.anthropicApiKey {
+                maskedAnthropicKey = maskKey(key)
+            }
+            if let key = KeychainManager.openaiApiKey {
+                maskedOpenaiKey = maskKey(key)
+            }
             models = fetchedModels
             let defaultSonnet = fetchedModels.first(where: { $0.available && $0.id.contains("sonnet") })?.id
             let defaultHaiku = fetchedModels.first(where: { $0.available && $0.id.contains("haiku") })?.id
@@ -279,6 +284,13 @@ struct SettingsView: View {
     private func removeKey(provider: String) async {
         let key = provider == "anthropic" ? "anthropicApiKey" : "openaiApiKey"
         do {
+            // Remove from Keychain
+            if provider == "anthropic" {
+                KeychainManager.anthropicApiKey = nil
+            } else {
+                KeychainManager.openaiApiKey = nil
+            }
+            // Tell server to clear the in-memory key
             try await viewModel.updateSettings([key: ""])
             if provider == "anthropic" {
                 maskedAnthropicKey = nil
@@ -305,6 +317,15 @@ struct SettingsView: View {
         isSaving = true
         statusMessage = nil
 
+        // Save API keys to Keychain
+        if !anthropicKeyInput.isEmpty {
+            KeychainManager.anthropicApiKey = anthropicKeyInput
+        }
+        if !openaiKeyInput.isEmpty {
+            KeychainManager.openaiApiKey = openaiKeyInput
+        }
+
+        // Build server update — always push current Keychain keys so the server has them in memory
         var updates: [String: String] = [:]
 
         if !anthropicKeyInput.isEmpty {

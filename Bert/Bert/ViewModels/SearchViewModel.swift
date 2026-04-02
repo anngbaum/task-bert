@@ -84,7 +84,7 @@ final class SearchViewModel: ObservableObject {
 
     // Agent (agentic search)
     @Published var agentQuery: String = ""
-    @Published private(set) var agentResponse: SearchService.AgentResponse? = nil
+    @Published private(set) var agentResponse: APIClient.AgentResponse? = nil
     @Published private(set) var isAgentRunning: Bool = false
     @Published private(set) var agentError: String? = nil
     @Published private(set) var agentProgress: [AgentProgressStep] = []
@@ -107,7 +107,7 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
-    private let service = SearchService()
+    private let service = APIClient()
     private var healthPollTask: Task<Void, Never>?
 
     init() {
@@ -136,11 +136,16 @@ final class SearchViewModel: ObservableObject {
 
     @MainActor
     func checkApiKeyStatus() async {
-        do {
-            let settings = try await service.fetchSettings()
-            hasApiKey = (settings.anthropicApiKey != nil || settings.openaiApiKey != nil)
-        } catch {
-            hasApiKey = false
+        // Check Keychain for stored keys and push them to the server (in-memory only)
+        let anthropicKey = KeychainManager.anthropicApiKey
+        let openaiKey = KeychainManager.openaiApiKey
+        hasApiKey = (anthropicKey != nil || openaiKey != nil)
+
+        if hasApiKey {
+            var updates: [String: String] = [:]
+            if let key = anthropicKey { updates["anthropicApiKey"] = key }
+            if let key = openaiKey { updates["openaiApiKey"] = key }
+            try? await service.updateSettings(updates)
         }
     }
 
@@ -180,7 +185,7 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
-    private func progressMessage(_ progress: SearchService.HealthProgress?) -> String {
+    private func progressMessage(_ progress: APIClient.HealthProgress?) -> String {
         guard let p = progress else {
             return "Sync in progress..."
         }
@@ -845,11 +850,11 @@ final class SearchViewModel: ObservableObject {
 
     // MARK: - Settings
 
-    func fetchSettings() async throws -> SearchService.SettingsResponse {
+    func fetchSettings() async throws -> APIClient.SettingsResponse {
         try await service.fetchSettings()
     }
 
-    func fetchModels() async throws -> [SearchService.ModelOption] {
+    func fetchModels() async throws -> [APIClient.ModelOption] {
         try await service.fetchModels()
     }
 
@@ -893,7 +898,7 @@ final class SearchViewModel: ObservableObject {
 
     // MARK: - Debug Logs
 
-    @Published private(set) var debugLogs: [SearchService.LogEntry] = []
+    @Published private(set) var debugLogs: [APIClient.LogEntry] = []
     @Published private(set) var isLoadingLogs: Bool = false
 
     @MainActor

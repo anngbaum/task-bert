@@ -1,7 +1,75 @@
 import Foundation
 
-actor SearchService {
+actor APIClient {
     private let baseURL = URL(string: "http://localhost:11488")!
+
+    /// Bearer token read from the server's auth-token file.
+    /// Loaded lazily on first request and cached.
+    private var authToken: String?
+
+    private func loadAuthTokenIfNeeded() {
+        guard authToken == nil else { return }
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let tokenPath = appSupport.appendingPathComponent("Bert/auth-token").path
+        authToken = try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Reset the cached token (call after server restart to pick up new token)
+    func resetAuthToken() {
+        authToken = nil
+    }
+
+    private func authorizedRequest(url: URL, method: String = "GET") -> URLRequest {
+        loadAuthTokenIfNeeded()
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        if let token = authToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    /// GET with auth header. Retries once on 401 with a fresh token.
+    private func authData(from url: URL) async throws -> (Data, URLResponse) {
+        let request = authorizedRequest(url: url)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            authToken = nil
+            let retry = authorizedRequest(url: url)
+            return try await URLSession.shared.data(for: retry)
+        }
+        return (data, response)
+    }
+
+    /// Request with auth header. Retries once on 401 with a fresh token.
+    private func authData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        var req = request
+        loadAuthTokenIfNeeded()
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await URLSession.shared.data(for: req)
+        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            authToken = nil
+            var retry = request
+            loadAuthTokenIfNeeded()
+            if let token = authToken {
+                retry.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            return try await URLSession.shared.data(for: retry)
+        }
+        return (data, response)
+    }
+
+    /// Streaming bytes with auth header
+    private func authBytes(for request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        var req = request
+        loadAuthTokenIfNeeded()
+        if let token = authToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        return try await URLSession.shared.bytes(for: req)
+    }
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -110,7 +178,7 @@ actor SearchService {
 
         components.queryItems = queryItems
 
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let (data, response) = try await authData(from: components.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -121,7 +189,7 @@ actor SearchService {
 
     func fetchContacts() async throws -> [Contact] {
         let url = baseURL.appendingPathComponent("api/contacts")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await authData(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -132,7 +200,7 @@ actor SearchService {
 
     func fetchGroups() async throws -> [GroupChat] {
         let url = baseURL.appendingPathComponent("api/groups")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await authData(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -151,7 +219,7 @@ actor SearchService {
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
         request.timeoutInterval = 600 // Hard reset can take longer
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -163,7 +231,7 @@ actor SearchService {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/soft-reset"))
         request.httpMethod = "POST"
         request.timeoutInterval = 600
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -183,7 +251,7 @@ actor SearchService {
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -199,7 +267,7 @@ actor SearchService {
 
     func fetchDataRange() async throws -> DataRangeResponse {
         let url = baseURL.appendingPathComponent("api/data-range")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await authData(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -209,7 +277,7 @@ actor SearchService {
 
     func fetchHealth() async throws -> HealthResponse {
         let url = baseURL.appendingPathComponent("health")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await authData(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -236,7 +304,7 @@ actor SearchService {
         if let limit { queryItems.append(URLQueryItem(name: "limit", value: String(limit))) }
         components.queryItems = queryItems
 
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let (data, response) = try await authData(from: components.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -251,7 +319,7 @@ actor SearchService {
 
     func fetchChatMetadata() async throws -> [ChatMetadata] {
         let url = baseURL.appendingPathComponent("api/chat-metadata")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await authData(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -262,7 +330,7 @@ actor SearchService {
     func fetchLeaderboard(chatId: Int) async throws -> LeaderboardResponse {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/chat-leaderboard"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "chatId", value: String(chatId))]
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let (data, response) = try await authData(from: components.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -280,7 +348,7 @@ actor SearchService {
         components.queryItems = [URLQueryItem(name: "chatId", value: String(chatId))]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -305,7 +373,7 @@ actor SearchService {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -320,7 +388,7 @@ actor SearchService {
         ]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -334,7 +402,7 @@ actor SearchService {
         ]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -346,7 +414,7 @@ actor SearchService {
         components.queryItems = [URLQueryItem(name: "id", value: String(id))]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -368,7 +436,7 @@ actor SearchService {
         body["location"] = location ?? NSNull()
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -378,7 +446,7 @@ actor SearchService {
     func fetchEventMessage(eventId: Int) async throws -> String? {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/events/message"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "id", value: String(eventId))]
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let (data, response) = try await authData(from: components.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             return nil
         }
@@ -401,7 +469,7 @@ actor SearchService {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -417,7 +485,7 @@ actor SearchService {
         components.queryItems = queryItems
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -429,7 +497,7 @@ actor SearchService {
         if includeCompleted {
             components.queryItems = [URLQueryItem(name: "completed", value: "true")]
         }
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let (data, response) = try await authData(from: components.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -482,7 +550,7 @@ actor SearchService {
         request.timeoutInterval = 120
         request.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await authBytes(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -522,8 +590,8 @@ actor SearchService {
     }
 
     struct SettingsResponse: Decodable {
-        let anthropicApiKey: String?
-        let openaiApiKey: String?
+        let hasAnthropicKey: Bool?
+        let hasOpenaiKey: Bool?
         let selectedModel: String?
         let actionsModel: String?
         let summaryModel: String?
@@ -543,7 +611,7 @@ actor SearchService {
 
     func fetchSettings() async throws -> SettingsResponse {
         let url = baseURL.appendingPathComponent("api/settings")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await authData(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -553,7 +621,7 @@ actor SearchService {
 
     func fetchModels() async throws -> [ModelOption] {
         let url = baseURL.appendingPathComponent("api/models")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await authData(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -567,7 +635,7 @@ actor SearchService {
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: updates)
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await authData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -591,7 +659,7 @@ actor SearchService {
     func fetchLogs(limit: Int = 200) async throws -> [LogEntry] {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/logs"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let (data, response) = try await authData(from: components.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
@@ -607,7 +675,7 @@ actor SearchService {
             URLQueryItem(name: "after", value: String(after)),
         ]
 
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let (data, response) = try await authData(from: components.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)

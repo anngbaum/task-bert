@@ -7,7 +7,7 @@ struct DebugLogsView: View {
     @State private var refreshTask: Task<Void, Never>? = nil
     @State private var filterLevel: String = "all"
 
-    private var filteredLogs: [SearchService.LogEntry] {
+    private var filteredLogs: [APIClient.LogEntry] {
         if filterLevel == "all" {
             return viewModel.debugLogs
         }
@@ -103,7 +103,7 @@ struct DebugLogsView: View {
         }
     }
 
-    private func logRow(_ log: SearchService.LogEntry) -> some View {
+    private func logRow(_ log: APIClient.LogEntry) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(formatTimestamp(log.ts))
                 .font(.system(.caption2, design: .monospaced))

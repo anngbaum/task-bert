@@ -18,7 +18,7 @@
 		A10004 /* ContextMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004 /* ContextMessage.swift */; };
 		A10005 /* SearchMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005 /* SearchMode.swift */; };
 		A10006 /* SearchFilters.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006 /* SearchFilters.swift */; };
-		A10007 /* SearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007 /* SearchService.swift */; };
+		A10007 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007 /* APIClient.swift */; };
 		A10008 /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10008 /* SearchViewModel.swift */; };
 		A10009 /* SearchBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10009 /* SearchBarView.swift */; };
 		A10011 /* ResultsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* ResultsListView.swift */; };
@@ -33,6 +33,7 @@
 		A10022 /* ServerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* ServerManager.swift */; };
 		A10023 /* DebugLogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* DebugLogsView.swift */; };
 		A10024 /* RemindersSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* RemindersSyncManager.swift */; };
+		A10029 /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10029 /* KeychainManager.swift */; };
 		A10025 /* AgentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* AgentView.swift */; };
 		A10026 /* EventsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* EventsPanelView.swift */; };
 		A10027 /* LeaderboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* LeaderboardView.swift */; };
@@ -51,7 +52,7 @@
 		B10004 /* ContextMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextMessage.swift; sourceTree = "<group>"; };
 		B10005 /* SearchMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchMode.swift; sourceTree = "<group>"; };
 		B10006 /* SearchFilters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchFilters.swift; sourceTree = "<group>"; };
-		B10007 /* SearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchService.swift; sourceTree = "<group>"; };
+		B10007 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		B10008 /* SearchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModel.swift; sourceTree = "<group>"; };
 		B10009 /* SearchBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarView.swift; sourceTree = "<group>"; };
 		B10011 /* ResultsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsListView.swift; sourceTree = "<group>"; };
@@ -67,6 +68,7 @@
 		B10022 /* ServerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerManager.swift; sourceTree = "<group>"; };
 		B10023 /* DebugLogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogsView.swift; sourceTree = "<group>"; };
 		B10024 /* RemindersSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersSyncManager.swift; sourceTree = "<group>"; };
+		B10029 /* KeychainManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainManager.swift; sourceTree = "<group>"; };
 		B10025 /* AgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentView.swift; sourceTree = "<group>"; };
 		B10026 /* EventsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsPanelView.swift; sourceTree = "<group>"; };
 		B10027 /* LeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardView.swift; sourceTree = "<group>"; };
@@ -127,7 +129,8 @@
 		E10004 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				B10007 /* SearchService.swift */,
+				B10007 /* APIClient.swift */,
+				B10029 /* KeychainManager.swift */,
 				B10022 /* ServerManager.swift */,
 				B10024 /* RemindersSyncManager.swift */,
 			);
@@ -280,7 +283,7 @@
 				3E766BAA2F636A0E00A531F1 /* ChatMetadataPanelView.swift in Sources */,
 				A10005 /* SearchMode.swift in Sources */,
 				A10006 /* SearchFilters.swift in Sources */,
-				A10007 /* SearchService.swift in Sources */,
+				A10007 /* APIClient.swift in Sources */,
 				A10008 /* SearchViewModel.swift in Sources */,
 				A10009 /* SearchBarView.swift in Sources */,
 				A10011 /* ResultsListView.swift in Sources */,
@@ -299,6 +302,7 @@
 				A10026 /* EventsPanelView.swift in Sources */,
 				A10027 /* LeaderboardView.swift in Sources */,
 				A10028 /* TaskTriageView.swift in Sources */,
+				A10029 /* KeychainManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
@@ -130,7 +131,15 @@ interface AppSettings {
 function loadSettings(): AppSettings {
   try {
     if (fs.existsSync(SETTINGS_PATH)) {
-      return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+      const saved = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+      // Strip any API keys that were persisted by older versions
+      const { anthropicApiKey, openaiApiKey, ...safeSettings } = saved;
+      if (anthropicApiKey || openaiApiKey) {
+        // Re-save without keys to clean up the file
+        fs.writeFileSync(SETTINGS_PATH, JSON.stringify(safeSettings, null, 2), { mode: 0o600 });
+        console.log('[settings] Migrated: removed API keys from settings.json (now managed by Keychain)');
+      }
+      return safeSettings;
     }
   } catch {
     // Ignore corrupt settings
@@ -143,10 +152,34 @@ function saveSettings(settings: AppSettings): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+  // Only persist non-sensitive settings — API keys stay in memory only
+  const { anthropicApiKey, openaiApiKey, ...safeSettings } = settings;
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(safeSettings, null, 2), { mode: 0o600 });
 }
 
 let settings = loadSettings();
+
+// --- Bearer token auth ---
+const AUTH_TOKEN = crypto.randomBytes(32).toString('hex');
+const AUTH_TOKEN_PATH = path.join(DATA_DIR, 'auth-token');
+
+function writeAuthToken(): void {
+  const dir = path.dirname(AUTH_TOKEN_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(AUTH_TOKEN_PATH, AUTH_TOKEN, { mode: 0o600 });
+}
+
+function checkAuth(req: http.IncomingMessage): boolean {
+  const header = req.headers['authorization'];
+  if (!header) return false;
+  const [scheme, token] = header.split(' ');
+  return scheme === 'Bearer' && token === AUTH_TOKEN;
+}
+
+// Write token immediately so clients can read it
+writeAuthToken();
 
 function corsHeaders(): Record<string, string> {
   return {};
@@ -366,15 +399,14 @@ async function handleModels(res: http.ServerResponse): Promise<void> {
 }
 
 async function handleGetSettings(res: http.ServerResponse): Promise<void> {
-  // Return settings with API keys masked
-  const masked: AppSettings = { ...settings };
-  if (masked.anthropicApiKey) {
-    masked.anthropicApiKey = maskKey(masked.anthropicApiKey);
-  }
-  if (masked.openaiApiKey) {
-    masked.openaiApiKey = maskKey(masked.openaiApiKey);
-  }
-  jsonResponse(res, masked);
+  // Return settings — never send API keys over the wire (even masked).
+  // The Swift client owns the keys via Keychain and pushes them on startup.
+  const { anthropicApiKey, openaiApiKey, ...safeSettings } = settings;
+  jsonResponse(res, {
+    ...safeSettings,
+    hasAnthropicKey: !!anthropicApiKey,
+    hasOpenaiKey: !!openaiApiKey,
+  });
 }
 
 async function handlePutSettings(
@@ -423,6 +455,12 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
   const params = url.searchParams;
+
+  // Allow /health without auth (needed for startup polling before token is read)
+  if (url.pathname !== '/health' && !checkAuth(req)) {
+    errorResponse(res, 'Unauthorized', 401);
+    return;
+  }
 
   try {
     // PUT routes
