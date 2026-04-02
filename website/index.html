@@ -20,13 +20,13 @@
 
   <style>
     :root {
-      --bg: #fafafa;
+      --bg: #faf6f1;
       --fg: #1a1a1a;
-      --muted: #666;
-      --accent: #2563eb;
-      --accent-hover: #1d4ed8;
-      --card-bg: #fff;
-      --card-border: #e5e7eb;
+      --muted: #7a7068;
+      --accent: #e16a3d;
+      --accent-hover: #c9562e;
+      --card-bg: #fffcf9;
+      --card-border: #e8e0d8;
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -82,8 +82,22 @@
       font-size: 1.25rem;
       color: var(--muted);
       max-width: 550px;
-      margin: 0 auto 2.5rem;
+      margin: 0 auto 1.25rem;
     }
+
+    .testimonial {
+      font-style: italic;
+      font-size: 1.05rem;
+      color: var(--muted);
+      max-width: 480px;
+      margin: 2rem auto 0;
+      padding: 1.25rem 1.5rem;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      line-height: 1.5;
+    }
+
 
     .download-btn {
       display: inline-block;
@@ -95,13 +109,13 @@
       border-radius: 12px;
       text-decoration: none;
       transition: background 0.15s, transform 0.15s;
-      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+      box-shadow: 0 4px 14px rgba(225, 106, 61, 0.3);
     }
 
     .download-btn:hover {
       background: var(--accent-hover);
       transform: translateY(-1px);
-      box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
+      box-shadow: 0 6px 20px rgba(225, 106, 61, 0.35);
     }
 
     .download-btn:active {
@@ -135,7 +149,7 @@
       gap: 0.6rem;
       padding: 0.75rem 1rem;
       border-bottom: 1px solid var(--card-border);
-      background: #f3f4f6;
+      background: #f5efe9;
       border-radius: 14px 14px 0 0;
     }
 
@@ -167,6 +181,7 @@
 
     /* Results body */
     .demo-body {
+      position: relative;
       padding: 1rem 1.25rem 1.25rem;
       font-size: 0.9rem;
       line-height: 1.65;
@@ -174,9 +189,15 @@
 
     /* Tool calls disclosure */
     .demo-tools {
+      position: absolute;
+      top: 1rem;
+      left: 1.25rem;
+      right: 1.25rem;
       opacity: 0;
       transform: translateY(4px);
       transition: opacity 0.3s, transform 0.3s;
+      background: var(--card-bg);
+      z-index: 1;
     }
 
     .demo-tools.visible {
@@ -184,12 +205,15 @@
       transform: translateY(0);
     }
 
+    .demo-tools.collapsed {
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
     .demo-tools-header {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      font-size: 0.8rem;
-      color: var(--muted);
+      font-size: 0.82rem;
+      color: #9ca3af;
+      font-style: italic;
       margin-bottom: 0.5rem;
       cursor: default;
     }
@@ -200,7 +224,7 @@
 
     .demo-tools-list {
       padding-left: 0.25rem;
-      margin-bottom: 0.75rem;
+      margin-bottom: 0;
     }
 
     .demo-step {
@@ -267,7 +291,7 @@
       opacity: 0;
       transform: translateY(4px);
       transition: opacity 0.4s, transform 0.4s;
-      margin-top: 0.5rem;
+      margin-top: 0;
       font-size: 0.9rem;
       line-height: 1.7;
       color: var(--fg);
@@ -534,11 +558,11 @@
 </header>
 
 <section class="hero">
-  <svg class="hero-broom" width="80" height="80" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><text y=".9em" font-size="90">🧹</text></svg>
-  <h1>The private iMessage assistant Siri should have shipped</h1>
+  <h1>The private AI assistant for managing your text messages</h1>
   <p>Ask your texts real questions, recover buried details, and turn vague plans into to-dos and calendar events — right from your Mac.</p>
   <a href="https://github.com/anngbaum/task-bert/releases/latest/download/Bert.dmg" class="download-btn">Download Bert for Mac</a>
   <p class="download-note">Requires macOS 13.2+ &middot; Free</p>
+  <blockquote class="testimonial">"This does exactly what I want Siri to do for my messages!"</blockquote>
 </section>
 
 <section class="privacy">
@@ -614,7 +638,6 @@
   var examples = [
     {
       query: "What\u2019s Sarah\u2019s new address?",
-      toolCount: 3,
       steps: [
         { action: 'Looking up contact "Sarah"' },
         { result: "Found: Sarah Johnson (1,847 msgs)" },
@@ -633,7 +656,6 @@
     },
     {
       query: "What\u2019s Jess\u2019s new baby\u2019s name?",
-      toolCount: 3,
       steps: [
         { action: 'Looking up contact "Jess"' },
         { result: "Found: Jess Smith (923 msgs)" },
@@ -652,7 +674,6 @@
     },
     {
       query: "What am I supposed to bring to Mike\u2019s birthday?",
-      toolCount: 3,
       steps: [
         { action: 'Looking up contact "Mike"' },
         { result: "Found: Mike Jones (514 msgs)" },
@@ -684,9 +705,7 @@
     // Tool calls disclosure
     h += '<div class="demo-tools" id="demo-tools">';
     h += '<div class="demo-tools-header">';
-    h += '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
-    h += '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>';
-    h += '<span>' + ex.toolCount + ' tool calls</span>';
+    h += '<span>Searching...</span>';
     h += '</div>';
     h += '<div class="demo-tools-list">';
     var idx = 0;
@@ -784,7 +803,13 @@
     var thinkings = content.querySelectorAll('.demo-thinking');
     for (var t = 0; t < thinkings.length; t++) thinkings[t].style.display = 'none';
 
-    await delay(500);
+    // Collapse tools to save space
+    var toolsEl = document.getElementById('demo-tools');
+    toolsEl.style.maxHeight = toolsEl.scrollHeight + 'px';
+    await delay(50);
+    toolsEl.classList.add('collapsed');
+
+    await delay(400);
     document.getElementById('demo-answer').classList.add('visible');
     await delay(300);
     document.getElementById('demo-refs').classList.add('visible');
