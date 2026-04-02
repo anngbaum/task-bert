@@ -433,23 +433,23 @@ struct EventRowView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
+                    if let date = event.date {
+                        Label(eventDateText(date), systemImage: "calendar")
+                            .font(.caption2)
+                            .foregroundStyle(.purple)
+                    }
                     if let chatName = event.chat_name {
                         Label(chatName, systemImage: "bubble.left")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
-                    if let date = event.date {
-                        Label(eventDateText(date), systemImage: "calendar")
-                            .font(.caption2)
-                            .foregroundStyle(.purple)
-                    }
-                    if let location = event.location {
-                        Label(location, systemImage: "mappin")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                }
+                if let location = event.location, !location.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Label(location, systemImage: "mappin")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
                 if let msg = calendarMessage {
