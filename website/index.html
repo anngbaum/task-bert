@@ -114,31 +114,253 @@
       color: var(--muted);
     }
 
-    .features {
-      max-width: 800px;
+    .demo {
+      max-width: 680px;
       margin: 0 auto;
       padding: 2rem 1.5rem 4rem;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.25rem;
     }
 
-    .feature {
+    .demo-window {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 1.5rem;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
     }
 
-    .feature h3 {
-      font-size: 1rem;
-      font-weight: 700;
-      margin-bottom: 0.35rem;
+    /* Search bar */
+    .demo-search {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--card-border);
+      background: #f3f4f6;
+      border-radius: 14px 14px 0 0;
     }
 
-    .feature p {
+    .demo-search .sparkle {
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .demo-search .search-text {
+      flex: 1;
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--fg);
+      min-height: 1.4em;
+    }
+
+    .demo-cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.15em;
+      background: var(--fg);
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    /* Results body */
+    .demo-body {
+      padding: 1rem 1.25rem 1.25rem;
       font-size: 0.9rem;
+      line-height: 1.65;
+    }
+
+    /* Tool calls disclosure */
+    .demo-tools {
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.3s, transform 0.3s;
+    }
+
+    .demo-tools.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .demo-tools-header {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
       color: var(--muted);
+      margin-bottom: 0.5rem;
+      cursor: default;
+    }
+
+    .demo-tools-header svg {
+      flex-shrink: 0;
+    }
+
+    .demo-tools-list {
+      padding-left: 0.25rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .demo-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.45rem;
+      font-size: 0.82rem;
+      color: #555;
+      line-height: 1.5;
+      margin-bottom: 0.2rem;
+      opacity: 0;
+      transform: translateY(3px);
+      transition: opacity 0.25s, transform 0.25s;
+    }
+
+    .demo-step.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .demo-step .step-icon {
+      flex-shrink: 0;
+      margin-top: 0.15rem;
+    }
+
+    .demo-step .step-icon.searching { color: #9ca3af; }
+    .demo-step .step-icon.done { color: #22c55e; }
+
+    .demo-step .step-text {
+      flex: 1;
+    }
+
+    .demo-thinking {
+      font-size: 0.82rem;
+      color: #9ca3af;
+      font-style: italic;
+      margin-bottom: 0.2rem;
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+
+    .demo-thinking.visible {
+      opacity: 1;
+    }
+
+    .demo-spinner {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      border: 2px solid #e5e7eb;
+      border-top-color: #9ca3af;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 0.3rem;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Answer text */
+    .demo-answer {
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.4s, transform 0.4s;
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+      line-height: 1.7;
+      color: var(--fg);
+    }
+
+    .demo-answer.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .demo-answer p {
+      margin-bottom: 0.65rem;
+    }
+
+    .demo-answer .cite {
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 600;
+      vertical-align: super;
+      cursor: default;
+    }
+
+    /* Referenced messages */
+    .demo-refs {
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.4s, transform 0.4s;
+      margin-top: 1rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid var(--card-border);
+    }
+
+    .demo-refs.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .demo-refs-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.6rem;
+    }
+
+    .demo-ref {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      margin-bottom: 0.65rem;
+    }
+
+    .demo-ref .ref-num {
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 0.1rem;
+    }
+
+    .demo-ref .ref-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .demo-ref .ref-meta {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .demo-ref .ref-sender {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--fg);
+    }
+
+    .demo-ref .ref-chat {
+      font-size: 0.75rem;
+      color: #9ca3af;
+    }
+
+    .demo-ref .ref-date {
+      font-size: 0.75rem;
+      color: #9ca3af;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+
+    .demo-ref .ref-text {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-top: 0.1rem;
     }
 
     .how-it-works {
@@ -299,7 +521,8 @@
     @media (max-width: 600px) {
       .hero h1 { font-size: 2rem; }
       .hero p { font-size: 1.05rem; }
-      .features { grid-template-columns: 1fr; }
+      .demo-body { font-size: 0.82rem; padding: 0.75rem; }
+      .demo-search .search-text { font-size: 0.85rem; }
       .steps { flex-direction: column; gap: 1rem; }
     }
   </style>
@@ -323,30 +546,13 @@
   <p>Bert runs entirely on your Mac. Your messages are indexed locally in an embedded database — nothing is uploaded, stored remotely, or shared. You bring your own API key for AI features.</p>
 </section>
 
-<section class="features">
-  <div class="feature">
-    <h3>Powerful search</h3>
-    <p>Full-text, semantic, and hybrid search across your entire message history. Find anything instantly.</p>
-  </div>
-  <div class="feature">
-    <h3>Action items</h3>
-    <p>Automatically extracts unanswered questions, commitments, and plans from your recent conversations.</p>
-  </div>
-  <div class="feature">
-    <h3>Reminders integration</h3>
-    <p>Tasks sync to Apple Reminders automatically. Complete them in either place and they stay in sync.</p>
-  </div>
-  <div class="feature">
-    <h3>Smart filters</h3>
-    <p>Filter by contact, date range, group chat, or direction. Typeahead makes it fast.</p>
-  </div>
-  <div class="feature">
-    <h3>Thread view</h3>
-    <p>See the full context around any search result — jump straight into the conversation.</p>
-  </div>
-  <div class="feature">
-    <h3>100% local</h3>
-    <p>Everything runs on your Mac. Your messages never leave your computer.</p>
+<section class="demo">
+  <div class="demo-window" id="demo-body">
+    <div class="demo-search">
+      <svg class="sparkle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/></svg>
+      <div class="search-text"><span id="demo-typed"></span><span class="demo-cursor" id="demo-cursor"></span></div>
+    </div>
+    <div class="demo-body" id="demo-content"></div>
   </div>
 </section>
 
@@ -400,5 +606,213 @@
   &copy; 2026 Task Bert
 </footer>
 
+<script>
+(function() {
+  var CHECK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+  var SPINNER = '<span class="demo-spinner"></span>';
+
+  var examples = [
+    {
+      query: "What\u2019s Sarah\u2019s new address?",
+      toolCount: 3,
+      steps: [
+        { action: 'Looking up contact "Sarah"' },
+        { result: "Found: Sarah Johnson (1,847 msgs)" },
+        { thinking: "Analyzing results..." },
+        { action: 'Searching for "address", in conversations with Sarah Johnson' },
+        { result: "Found 6 messages" },
+        { thinking: "Analyzing results..." },
+        { action: "Reading conversation around message #4092" },
+        { result: "Got 12 surrounding messages" },
+      ],
+      answer: '<p>Sarah\u2019s new address is <strong>742 Evergreen Terrace, Apt 3B</strong>. She mentioned it on March 18th when she was inviting people to her housewarming. <span class="cite">[1]</span></p><p>She confirmed she officially moved in about a week before that \u2014 around March 10th. <span class="cite">[2]</span></p>',
+      refs: [
+        { num: 1, sender: "Sarah Johnson", chat: "in chat with Sarah Johnson", date: "Mar 18", text: "housewarming next saturday! new place is 742 Evergreen Terrace, Apt 3B" },
+        { num: 2, sender: "Sarah Johnson", chat: "in chat with Sarah Johnson", date: "Mar 10", text: "finally got the keys!! moving in this weekend" },
+      ],
+    },
+    {
+      query: "What\u2019s Jess\u2019s new baby\u2019s name?",
+      toolCount: 3,
+      steps: [
+        { action: 'Looking up contact "Jess"' },
+        { result: "Found: Jess Smith (923 msgs)" },
+        { thinking: "Analyzing results..." },
+        { action: 'Searching for "baby", in conversations with Jess Smith' },
+        { result: "Found 4 messages" },
+        { thinking: "Analyzing results..." },
+        { action: "Reading conversation around message #7261" },
+        { result: "Got 15 surrounding messages" },
+      ],
+      answer: '<p>Jess\u2019s baby\u2019s name is <strong>Elizabeth</strong>! She was born on <strong>January 3rd</strong>. <span class="cite">[1]</span></p><p>Jess shared the news on January 5th and sounds over the moon about it. <span class="cite">[2]</span></p>',
+      refs: [
+        { num: 1, sender: "Jess Smith", chat: "in chat with Jess Smith", date: "Jan 5", text: "Can\u2019t wait for you to meet Elizabeth!! She was born Jan 3 \u2764\ufe0f" },
+        { num: 2, sender: "Jess Smith", chat: "in chat with Jess Smith", date: "Jan 5", text: "she\u2019s so tiny and perfect, I\u2019m totally in love" },
+      ],
+    },
+    {
+      query: "What am I supposed to bring to Mike\u2019s birthday?",
+      toolCount: 3,
+      steps: [
+        { action: 'Looking up contact "Mike"' },
+        { result: "Found: Mike Jones (514 msgs)" },
+        { thinking: "Analyzing results..." },
+        { action: 'Searching for "birthday", in conversations with Mike Jones' },
+        { result: "Found 5 messages" },
+        { thinking: "Analyzing results..." },
+        { action: "Reading conversation around message #5530" },
+        { result: "Got 18 surrounding messages" },
+      ],
+      answer: '<p>You told Mike you\u2019d bring <strong>chips and a six-pack</strong> to his birthday party. <span class="cite">[1]</span></p><p>The party is on <strong>Saturday, April 19th</strong> at his place, starting around 7. <span class="cite">[2]</span></p>',
+      refs: [
+        { num: 1, sender: "Me", chat: "in chat with Mike Jones", date: "Apr 1", text: "I\u2019ll grab chips and a six-pack, that cool?" },
+        { num: 2, sender: "Mike Jones", chat: "in chat with Mike Jones", date: "Mar 29", text: "party\u2019s saturday the 19th at my place, probably 7ish" },
+      ],
+    },
+  ];
+
+  var typed = document.getElementById('demo-typed');
+  var cursorEl = document.getElementById('demo-cursor');
+  var content = document.getElementById('demo-content');
+  var currentExample = 0;
+  var running = false;
+
+  function delay(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+
+  function buildHTML(ex) {
+    var h = '';
+    // Tool calls disclosure
+    h += '<div class="demo-tools" id="demo-tools">';
+    h += '<div class="demo-tools-header">';
+    h += '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
+    h += '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>';
+    h += '<span>' + ex.toolCount + ' tool calls</span>';
+    h += '</div>';
+    h += '<div class="demo-tools-list">';
+    var idx = 0;
+    for (var i = 0; i < ex.steps.length; i++) {
+      var s = ex.steps[i];
+      if (s.thinking) {
+        h += '<div class="demo-thinking" data-step="' + idx + '">' + SPINNER + s.thinking + '</div>';
+      } else if (s.action) {
+        h += '<div class="demo-step" data-step="' + idx + '"><span class="step-icon searching">' + SPINNER + '</span><span class="step-text">' + s.action + '</span></div>';
+      } else if (s.result) {
+        h += '<div class="demo-step" data-step="' + idx + '"><span class="step-icon done">' + CHECK + '</span><span class="step-text">' + s.result + '</span></div>';
+      }
+      idx++;
+    }
+    h += '</div></div>';
+    // Answer
+    h += '<div class="demo-answer" id="demo-answer">' + ex.answer + '</div>';
+    // Refs
+    h += '<div class="demo-refs" id="demo-refs"><div class="demo-refs-title">Referenced Messages</div>';
+    for (var r = 0; r < ex.refs.length; r++) {
+      var ref = ex.refs[r];
+      h += '<div class="demo-ref"><span class="ref-num">[' + ref.num + ']</span><div class="ref-body">';
+      h += '<div class="ref-meta"><span class="ref-sender">' + ref.sender + '</span><span class="ref-chat">' + ref.chat + '</span><span class="ref-date">' + ref.date + '</span></div>';
+      h += '<div class="ref-text">' + ref.text + '</div></div></div>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  async function runExample(ex) {
+    running = true;
+
+    // Reset
+    typed.textContent = '';
+    cursorEl.style.display = '';
+    content.innerHTML = buildHTML(ex);
+
+    await delay(500);
+
+    // Type query
+    for (var i = 0; i < ex.query.length; i++) {
+      typed.textContent += ex.query[i];
+      await delay(40 + Math.random() * 35);
+    }
+    cursorEl.style.display = 'none';
+
+    await delay(400);
+
+    // Show tools section
+    document.getElementById('demo-tools').classList.add('visible');
+
+    // Animate steps
+    var allSteps = content.querySelectorAll('[data-step]');
+    var prevAction = null;
+    var prevThinking = null;
+    for (var s = 0; s < allSteps.length; s++) {
+      var el = allSteps[s];
+      var isThinking = el.classList.contains('demo-thinking');
+      var isResult = el.querySelector('.step-icon.done');
+      var isAction = el.querySelector('.step-icon.searching');
+
+      if (isThinking) {
+        // Hide previous thinking line's spinner
+        if (prevThinking) {
+          var ts = prevThinking.querySelector('.demo-spinner');
+          if (ts) ts.style.display = 'none';
+        }
+        await delay(300);
+        el.classList.add('visible');
+        prevThinking = el;
+      } else if (isAction) {
+        // Hide the thinking spinner — action has started
+        if (prevThinking) {
+          var ts2 = prevThinking.querySelector('.demo-spinner');
+          if (ts2) ts2.style.display = 'none';
+        }
+        await delay(500);
+        el.classList.add('visible');
+        prevAction = el;
+      } else if (isResult) {
+        await delay(650);
+        // Mark previous action as done (swap spinner for check)
+        if (prevAction) {
+          var icon = prevAction.querySelector('.step-icon');
+          icon.className = 'step-icon done';
+          icon.innerHTML = CHECK;
+        }
+        el.classList.add('visible');
+      }
+    }
+
+    // Clean up spinners and thinking
+    var spinners = content.querySelectorAll('.demo-tools-list .demo-spinner');
+    for (var sp = 0; sp < spinners.length; sp++) spinners[sp].style.display = 'none';
+    var thinkings = content.querySelectorAll('.demo-thinking');
+    for (var t = 0; t < thinkings.length; t++) thinkings[t].style.display = 'none';
+
+    await delay(500);
+    document.getElementById('demo-answer').classList.add('visible');
+    await delay(300);
+    document.getElementById('demo-refs').classList.add('visible');
+
+    running = false;
+  }
+
+  async function cycle() {
+    await runExample(examples[currentExample]);
+    await delay(5000);
+    // Fade out
+    content.style.transition = 'opacity 0.4s';
+    content.style.opacity = '0';
+    await delay(400);
+    currentExample = (currentExample + 1) % examples.length;
+    content.style.opacity = '1';
+    cycle();
+  }
+
+  // Start when demo scrolls into view
+  var observer = new IntersectionObserver(function(entries) {
+    if (entries[0].isIntersecting) {
+      cycle();
+      observer.disconnect();
+    }
+  }, { threshold: 0.3 });
+  observer.observe(document.getElementById('demo-body'));
+})();
+</script>
 </body>
 </html>
