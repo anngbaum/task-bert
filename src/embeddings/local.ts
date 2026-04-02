@@ -12,10 +12,13 @@ let embedder: FeatureExtractionPipeline | null = null;
 
 async function getEmbedder(): Promise<FeatureExtractionPipeline> {
   if (!embedder) {
+    console.log('[embedder] Loading ONNX model...');
+    const start = Date.now();
     embedder = await (pipeline as Function)('feature-extraction', MODEL_ID, {
       dtype: 'q8',
       cache_dir: path.join(DATA_DIR, 'models'),
     }) as FeatureExtractionPipeline;
+    console.log(`[embedder] Model loaded in ${((Date.now() - start) / 1000).toFixed(1)}s`);
   }
   return embedder;
 }

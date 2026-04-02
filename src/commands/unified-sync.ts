@@ -85,6 +85,10 @@ function getLLMConfig(options: UnifiedSyncOptions): LLMConfig {
   };
 }
 
+function hasValidLLMConfig(config: LLMConfig): boolean {
+  return !!(config.anthropicApiKey || config.openaiApiKey);
+}
+
 export async function getLastSynced(pg: import('@electric-sql/pglite').PGlite): Promise<Date | null> {
   const result = await pg.query('SELECT last_synced FROM sync_meta WHERE id = 1');
   if (result.rows.length === 0) return null;
@@ -220,25 +224,27 @@ export async function unifiedSync(options: UnifiedSyncOptions): Promise<UnifiedS
     await embed({ batchSize: embedBatchSize });
   }
 
-  // Metadata
+  // Metadata (only if an API key is configured)
   if (!skipMetadata) {
     const llmConfig = getLLMConfig(options);
-    const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
+    if (hasValidLLMConfig(llmConfig)) {
+      const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
 
-    if (mode === 'resync') {
-      // Resync: update metadata for ALL conversations in the time window
-      console.log(`Updating metadata for all conversations (last ${metadataDays}d)...`);
-      updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
-      await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 1 });
+      if (mode === 'resync') {
+        console.log(`Updating metadata for all conversations (last ${metadataDays}d)...`);
+        updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
+        await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 1 });
+      } else {
+        console.log(`Updating metadata (${etlResult.affectedChatIds.size} conversation(s) with new messages + any missing)...`);
+        updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
+        await updateMetadata(llmConfig, {
+          since: metadataCutoff,
+          minMessages: 1,
+          chatIds: etlResult.affectedChatIds,
+        });
+      }
     } else {
-      // Pull latest: metadata for conversations with new messages + any missing metadata
-      console.log(`Updating metadata (${etlResult.affectedChatIds.size} conversation(s) with new messages + any missing)...`);
-      updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
-      await updateMetadata(llmConfig, {
-        since: metadataCutoff,
-        minMessages: 1,
-        chatIds: etlResult.affectedChatIds,
-      });
+      console.log('\nSkipping metadata — no API key configured.');
     }
   }
 
@@ -349,13 +355,17 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
     await embed({ batchSize: embedBatchSize });
   }
 
-  // Update metadata for recent conversations
+  // Update metadata for recent conversations (only if an API key is configured)
   if (!skipMetadata) {
     const llmConfig = getLLMConfig(options);
-    const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
-    console.log(`\nUpdating chat metadata (last ${metadataDays}d)...`);
-    updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
-    await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 1 });
+    if (hasValidLLMConfig(llmConfig)) {
+      const metadataCutoff = new Date(Date.now() - metadataDays * 24 * 60 * 60 * 1000);
+      console.log(`\nUpdating chat metadata (last ${metadataDays}d)...`);
+      updateSyncProgress('metadata', 'Generating conversation summaries...', 85);
+      await updateMetadata(llmConfig, { since: metadataCutoff, minMessages: 1 });
+    } else {
+      console.log('\nSkipping metadata — no API key configured.');
+    }
   }
 
   // Restore Reminders-synced tasks, completed tasks, and removed events from before the wipe

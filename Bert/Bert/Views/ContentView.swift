@@ -40,7 +40,8 @@ struct ContentView: View {
                 switch onboardingPhase {
                 case .apiKeyPrompt:
                     OnboardingApiKeyView(viewModel: viewModel) { didEnterKey in
-                        if didEnterKey {
+                        print("[onboarding] apiKeyPrompt completed: didEnterKey=\(didEnterKey), hasApiKey=\(viewModel.hasApiKey)")
+                        if didEnterKey && viewModel.hasApiKey {
                             onboardingPhase = .updatingMetadata
                         } else {
                             hasCompletedOnboarding = true
@@ -385,6 +386,13 @@ struct OnboardingApiKeyView: View {
             updates["openaiApiKey"] = openaiKeyInput
         }
 
+        guard !updates.isEmpty else {
+            // No key entered — treat as skip
+            isSaving = false
+            onComplete(false)
+            return
+        }
+
         do {
             if !anthropicKeyInput.isEmpty {
                 KeychainManager.anthropicApiKey = anthropicKeyInput
@@ -424,18 +432,19 @@ struct OnboardingMetadataView: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 100, height: 100)
 
-            Text("Hello, I'm Bert.")
-                .font(.title)
-                .fontWeight(.semibold)
+            HStack(spacing: 10) {
+                Text("Hello, I'm Bert.")
+                    .font(.title)
+                    .fontWeight(.semibold)
+                ProgressView()
+                    .controlSize(.small)
+            }
 
             Text(viewModel.lastSyncMessage ?? "Generating conversation summaries...")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 60)
-
-            ProgressView()
-                .padding(.top, 4)
 
             Spacer()
         }

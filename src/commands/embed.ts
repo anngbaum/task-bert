@@ -25,17 +25,9 @@ interface EmbedOptions {
 
 export async function embed(options: EmbedOptions = {}): Promise<void> {
   const batchSize = options.batchSize || 200;
-  const inferenceChunkSize = 8; // Small chunks to avoid blocking the event loop too long
+  const inferenceChunkSize = 16; // Balance between per-call overhead and memory/latency
 
   const db = await getPglite();
-
-  // Repair any corrupted indexes from prior heavy writes (best-effort)
-  try {
-    console.log('Reindexing message table...');
-    await db.query('REINDEX TABLE message');
-  } catch (err) {
-    console.warn('Reindex failed (non-fatal):', (err as Error).message);
-  }
 
   // Count how many need embedding
   const countResult = await db.query(
@@ -56,29 +48,30 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
 
   let processed = 0;
   let errors = 0;
+  let lastId = 0; // Cursor-based pagination — avoids re-scanning already-processed rows
 
   while (true) {
-    // Fetch next batch
+    // Fetch next batch using cursor (id > lastId) instead of scanning from the start
     const batch = await db.query(
       `SELECT id, text FROM message
-       WHERE embedding IS NULL AND embedding_skipped = false
+       WHERE id > $2 AND embedding IS NULL AND embedding_skipped = false
        AND text IS NOT NULL AND text != ''
        AND associated_message_type = 0
        ORDER BY id
        LIMIT $1`,
-      [batchSize]
+      [batchSize, lastId]
     );
 
     if (batch.rows.length === 0) break;
 
     const allRows = batch.rows as { id: number; text: string }[];
+    lastId = allRows[allRows.length - 1].id;
 
     // Filter to messages with enough meaningful text content
     const rows = allRows.filter((r) => isEmbeddable(r.text));
     const skipIds = allRows.filter((r) => !isEmbeddable(r.text)).map((r) => r.id);
 
-    // Mark non-embeddable messages as skipped so they aren't re-fetched.
-    // We set embedding_skipped = true (see schema addition below).
+    // Mark non-embeddable messages as skipped
     if (skipIds.length > 0) {
       const placeholders = skipIds.map((_, i) => `$${i + 1}`).join(', ');
       await db.query(
@@ -88,8 +81,6 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
     }
 
     try {
-      // Process embeddings in smaller inference chunks for progress updates,
-      // but batch the DB writes per fetch batch
       const allEmbeddings: number[][] = [];
 
       for (let ci = 0; ci < rows.length; ci += inferenceChunkSize) {
@@ -109,21 +100,26 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
         await new Promise((r) => setTimeout(r, 0));
       }
 
-      // Batch update all embeddings in a single query
-      if (rows.length > 0) {
-        const values = rows.map((r, i) => {
-          const embeddingStr = `[${allEmbeddings[i].join(',')}]`;
-          return `(${r.id}, '${embeddingStr}'::vector)`;
-        }).join(', ');
-        await db.query(
-          `UPDATE message SET embedding = v.emb FROM (VALUES ${values}) AS v(id, emb) WHERE message.id = v.id`
-        );
+      // Write embeddings in a single transaction to minimize overhead
+      await db.exec('BEGIN');
+      try {
+        for (let wi = 0; wi < rows.length; wi++) {
+          const embeddingStr = `[${allEmbeddings[wi].join(',')}]`;
+          await db.query(
+            `UPDATE message SET embedding = $1::vector WHERE id = $2`,
+            [embeddingStr, rows[wi].id]
+          );
+        }
+        await db.exec('COMMIT');
+      } catch (writeErr) {
+        await db.exec('ROLLBACK').catch(() => {});
+        throw writeErr;
       }
 
       processed += allRows.length;
     } catch (err) {
       errors++;
-      console.error(`\nError processing batch at id ${rows[0].id}: ${err}`);
+      console.error(`\nError processing batch at id ${allRows[0].id}: ${err}`);
       if (errors > 5) {
         console.error('Too many errors, stopping.');
         break;
@@ -139,7 +135,5 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
     console.log(`  ${errors} batches had errors.`);
   }
 
-  // HNSW index is expensive to build in PGLite WASM — skip by default.
-  // Vector search uses exact scan (<=> operator) which is fine for this scale.
   console.log('Done. Vector search is now available.');
 }

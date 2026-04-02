@@ -84,9 +84,13 @@ struct ServerInitializingView: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 100, height: 100)
 
-            Text("Getting Started")
-                .font(.title)
-                .fontWeight(.semibold)
+            HStack(spacing: 10) {
+                Text("Getting Started")
+                    .font(.title)
+                    .fontWeight(.semibold)
+                ProgressView()
+                    .controlSize(.small)
+            }
 
             VStack(spacing: 8) {
                 ProgressView(value: progress.percent, total: 100)
@@ -115,9 +119,6 @@ struct ServerInitializingView: View {
                         .truncationMode(.middle)
                 }
             }
-
-            ProgressView()
-                .padding(.top, 4)
 
             // API key input — shown while import is still running
             if showKeyInput {
