@@ -426,48 +426,24 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
       );
       const answer = textBlocks.map(b => b.text).join('\n');
 
-      // Extract MSG-IDs from the answer to build links
+      // Extract MSG-IDs from the answer — only include links for messages
+      // that appeared in search results or context (no arbitrary DB fetches)
       const msgIdRegex = /\[\[MSG-(\d+)\]\]/g;
+      const referencedLinks: MessageLink[] = [];
       const seenIds = new Set<number>();
       let match;
       while ((match = msgIdRegex.exec(answer)) !== null) {
         const msgId = parseInt(match[1], 10);
         if (!seenIds.has(msgId)) {
           seenIds.add(msgId);
-          // Find this message in our collected links or fetch it
           const existing = collectedLinks.find(l => l.message_id === msgId);
-          if (!existing) {
-            // Fetch from DB
-            const db = await getPglite();
-            const result = await db.query(
-              `SELECT m.id, m.text, m.is_from_me, m.date,
-                      COALESCE(h.display_name, h.identifier) as sender,
-                      COALESCE(c.display_name, COALESCE(h2.display_name, h2.identifier)) as chat_name
-               FROM message m
-               LEFT JOIN handle h ON m.handle_id = h.id
-               LEFT JOIN chat_message_join cmj ON cmj.message_id = m.id
-               LEFT JOIN chat c ON c.id = cmj.chat_id
-               LEFT JOIN chat_handle_join chj ON chj.chat_id = c.id
-               LEFT JOIN handle h2 ON chj.handle_id = h2.id
-               WHERE m.id = $1
-               LIMIT 1`,
-              [msgId]
-            );
-            if (result.rows.length > 0) {
-              const row = result.rows[0] as any;
-              collectedLinks.push({
-                message_id: msgId,
-                text: row.text ?? '',
-                sender: row.is_from_me ? 'Me' : (row.sender ?? 'Unknown'),
-                date: row.date ? new Date(row.date).toISOString() : null,
-                chat_name: row.chat_name,
-              });
-            }
+          if (existing) {
+            referencedLinks.push(existing);
           }
         }
       }
 
-      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
+      return { answer, message_links: referencedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
     }
 
     // Execute tool calls
@@ -492,8 +468,8 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
           const searchResult = result as { results: SearchResult[]; resultsWithContext: { result: SearchResult; context: ContextMessage[] }[]; total: number };
           formattedResult = `Found ${searchResult.total} results:\n\n${formatSearchResultsForLLM(searchResult.resultsWithContext)}`;
 
-          // Collect message links from search results
-          for (const r of searchResult.results) {
+          // Collect message links from search results and their context
+          for (const { result: r, context } of searchResult.resultsWithContext) {
             if (!collectedLinks.find(l => l.message_id === r.id)) {
               collectedLinks.push({
                 message_id: r.id,
@@ -502,6 +478,17 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
                 date: r.date ? new Date(r.date).toISOString() : null,
                 chat_name: r.chat_name,
               });
+            }
+            for (const m of context) {
+              if (!collectedLinks.find(l => l.message_id === m.id)) {
+                collectedLinks.push({
+                  message_id: m.id,
+                  text: m.text ?? '',
+                  sender: m.is_from_me ? 'Me' : (m.sender ?? 'Unknown'),
+                  date: m.date ? new Date(m.date).toISOString() : null,
+                  chat_name: r.chat_name,
+                });
+              }
             }
           }
         } else if (toolUse.name === 'get_context') {
@@ -587,8 +574,10 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
     if (!toolCalls || toolCalls.length === 0 || choice.finish_reason === 'stop') {
       const answer = choice.message.content ?? '';
 
-      // Extract MSG-IDs
+      // Extract MSG-IDs — only include links for messages
+      // that appeared in search results or context (no arbitrary DB fetches)
       const msgIdRegex = /\[\[MSG-(\d+)\]\]/g;
+      const referencedLinks: MessageLink[] = [];
       const seenIds = new Set<number>();
       let match;
       while ((match = msgIdRegex.exec(answer)) !== null) {
@@ -596,37 +585,13 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
         if (!seenIds.has(msgId)) {
           seenIds.add(msgId);
           const existing = collectedLinks.find(l => l.message_id === msgId);
-          if (!existing) {
-            const db = await getPglite();
-            const result = await db.query(
-              `SELECT m.id, m.text, m.is_from_me, m.date,
-                      COALESCE(h.display_name, h.identifier) as sender,
-                      COALESCE(c.display_name, COALESCE(h2.display_name, h2.identifier)) as chat_name
-               FROM message m
-               LEFT JOIN handle h ON m.handle_id = h.id
-               LEFT JOIN chat_message_join cmj ON cmj.message_id = m.id
-               LEFT JOIN chat c ON c.id = cmj.chat_id
-               LEFT JOIN chat_handle_join chj ON chj.chat_id = c.id
-               LEFT JOIN handle h2 ON chj.handle_id = h2.id
-               WHERE m.id = $1
-               LIMIT 1`,
-              [msgId]
-            );
-            if (result.rows.length > 0) {
-              const row = result.rows[0] as any;
-              collectedLinks.push({
-                message_id: msgId,
-                text: row.text ?? '',
-                sender: row.is_from_me ? 'Me' : (row.sender ?? 'Unknown'),
-                date: row.date ? new Date(row.date).toISOString() : null,
-                chat_name: row.chat_name,
-              });
-            }
+          if (existing) {
+            referencedLinks.push(existing);
           }
         }
       }
 
-      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
+      return { answer, message_links: referencedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
     }
 
     // Execute tool calls
@@ -651,7 +616,7 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
           const searchResult = result as { results: SearchResult[]; resultsWithContext: { result: SearchResult; context: ContextMessage[] }[]; total: number };
           formattedResult = `Found ${searchResult.total} results:\n\n${formatSearchResultsForLLM(searchResult.resultsWithContext)}`;
 
-          for (const r of searchResult.results) {
+          for (const { result: r, context } of searchResult.resultsWithContext) {
             if (!collectedLinks.find(l => l.message_id === r.id)) {
               collectedLinks.push({
                 message_id: r.id,
@@ -660,6 +625,17 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
                 date: r.date ? new Date(r.date).toISOString() : null,
                 chat_name: r.chat_name,
               });
+            }
+            for (const m of context) {
+              if (!collectedLinks.find(l => l.message_id === m.id)) {
+                collectedLinks.push({
+                  message_id: m.id,
+                  text: m.text ?? '',
+                  sender: m.is_from_me ? 'Me' : (m.sender ?? 'Unknown'),
+                  date: m.date ? new Date(m.date).toISOString() : null,
+                  chat_name: r.chat_name,
+                });
+              }
             }
           }
         } else if (fn.name === 'get_context') {

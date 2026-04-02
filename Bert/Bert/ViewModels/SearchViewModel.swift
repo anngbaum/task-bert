@@ -90,7 +90,7 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var agentProgress: [AgentProgressStep] = []
 
     // API key state — controls whether LLM-powered tabs are available
-    @Published var hasApiKey: Bool = false
+    @Published var hasApiKey: Bool = KeychainManager.anthropicApiKey != nil || KeychainManager.openaiApiKey != nil
 
     // Set to true when a hard reset starts — ContentView observes this to push to triage/loading
     @Published var didStartHardReset: Bool = false
