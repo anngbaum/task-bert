@@ -9,7 +9,7 @@ struct AgentView: View {
             HStack(spacing: 12) {
                 HStack {
                     Image(systemName: "sparkles")
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(.blue)
 
                     TextField("Ask anything about your messages...", text: $viewModel.agentQuery)
                         .textFieldStyle(.plain)
