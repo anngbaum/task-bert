@@ -51,8 +51,8 @@ export interface UnifiedSyncOptions {
   metadataDays?: number;
   /** Embedding batch size */
   embedBatchSize?: number;
-  /** LLM config for metadata — if omitted, loads from settings.json */
-  llmConfig?: LLMConfig;
+  /** LLM config for metadata — if omitted, loads from settings.json. Use a function to defer resolution until metadata step. */
+  llmConfig?: LLMConfig | (() => LLMConfig);
 }
 
 export interface UnifiedSyncResult {
@@ -74,7 +74,9 @@ function loadSettings(): { anthropicApiKey?: string; openaiApiKey?: string; sele
 }
 
 function getLLMConfig(options: UnifiedSyncOptions): LLMConfig {
-  if (options.llmConfig) return options.llmConfig;
+  if (options.llmConfig) {
+    return typeof options.llmConfig === 'function' ? options.llmConfig() : options.llmConfig;
+  }
   const s = loadSettings();
   return {
     model: s.selectedModel ?? 'claude-haiku-4-5-20251001',

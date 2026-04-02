@@ -312,8 +312,9 @@ echo ""
 echo "To install:"
 echo "  1. Open Bert.dmg"
 echo "  2. Drag Bert to the Applications folder"
-echo "  3. Grant Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add Bert"
-echo "  4. Launch Bert"
+echo "  3. Launch Bert"
+echo "  4. Grant Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add Bert"
+echo "  5. Quit and Reopen Bert"
 
 # --- Upload to GitHub Releases ---
 echo ""

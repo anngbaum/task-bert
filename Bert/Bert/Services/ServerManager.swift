@@ -80,16 +80,47 @@ final class ServerManager: ObservableObject {
     private func checkExistingServer() {
         Task {
             do {
-                let (_, response) = try await URLSession.shared.data(from: healthURL)
+                let (data, response) = try await URLSession.shared.data(from: healthURL)
                 if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                    Self.logger.info("Existing server found on port — using it.")
-                    state = .running
+                    Self.logger.info("Existing server found on port.")
+                    // Check if the server is still doing its initial sync
+                    if let health = try? JSONDecoder().decode(HealthResponse.self, from: data), health.ready {
+                        state = .running
+                    } else {
+                        // Server is up but mid-import — show initializing screen and poll
+                        state = .initializing
+                        pollExistingServerHealth()
+                    }
                     return
                 }
             } catch {
                 // No server running — launch our own
             }
             launchServer()
+        }
+    }
+
+    /// Poll health on an existing (externally launched) server until it's ready.
+    private func pollExistingServerHealth() {
+        healthTask = Task {
+            let initTimeout: TimeInterval = 600
+            let startTime = Date()
+
+            while !Task.isCancelled {
+                if Date().timeIntervalSince(startTime) > initTimeout {
+                    state = .running
+                    Self.logger.warning("Existing server sync timed out, proceeding anyway.")
+                    return
+                }
+
+                if let health = await checkHealth(), health.ready {
+                    state = .running
+                    Self.logger.info("Existing server sync complete, ready.")
+                    return
+                }
+
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
         }
     }
 

@@ -26,14 +26,34 @@ struct ContentView: View {
     @State private var showSettings: Bool = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
     @AppStorage("hasCompletedTaskTriage") private var hasCompletedTaskTriage: Bool = false
+    @State private var onboardingPhase: OnboardingPhase = .apiKeyPrompt
+
+    enum OnboardingPhase {
+        case apiKeyPrompt       // No key yet — show entry screen with Skip
+        case updatingMetadata   // Key just entered — generating summaries
+        case taskReview         // Metadata done — review tasks
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             if !hasCompletedOnboarding {
-                OnboardingView(viewModel: viewModel) {
-                    hasCompletedOnboarding = true
-                    if viewModel.hasApiKey {
-                        selectedTab = .actions
+                switch onboardingPhase {
+                case .apiKeyPrompt:
+                    OnboardingApiKeyView(viewModel: viewModel) { didEnterKey in
+                        if didEnterKey {
+                            onboardingPhase = .updatingMetadata
+                        } else {
+                            hasCompletedOnboarding = true
+                        }
+                    }
+                case .updatingMetadata:
+                    OnboardingMetadataView(viewModel: viewModel) {
+                        onboardingPhase = .taskReview
+                    }
+                case .taskReview:
+                    TaskTriageView(viewModel: viewModel) {
+                        hasCompletedOnboarding = true
+                        hasCompletedTaskTriage = true
                     }
                 }
             } else if !hasCompletedTaskTriage && viewModel.hasApiKey {
@@ -129,6 +149,12 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(viewModel: viewModel)
         }
+        .onAppear {
+            // If user already has a key (entered during server init), skip to task review
+            if !hasCompletedOnboarding && viewModel.hasApiKey {
+                onboardingPhase = .taskReview
+            }
+        }
         .onChange(of: viewModel.hasApiKey) { _ in
             // If key was removed and we're on an LLM tab, switch to search
             if !viewModel.hasApiKey && selectedTab != .search {
@@ -139,9 +165,8 @@ struct ContentView: View {
             if started {
                 showSettings = false
                 hasCompletedTaskTriage = false
-                if !viewModel.hasApiKey {
-                    hasCompletedOnboarding = false
-                }
+                hasCompletedOnboarding = false
+                onboardingPhase = viewModel.hasApiKey ? .taskReview : .apiKeyPrompt
                 viewModel.didStartHardReset = false
             }
         }
@@ -265,11 +290,14 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Onboarding
+// MARK: - Onboarding: API Key Prompt
 
-struct OnboardingView: View {
+/// Shown after the initial import completes when the user has no API key.
+/// Offers to enter a key or skip.
+struct OnboardingApiKeyView: View {
     @ObservedObject var viewModel: SearchViewModel
-    let onComplete: () -> Void
+    /// Called with `true` if user entered a key, `false` if they skipped.
+    let onComplete: (Bool) -> Void
 
     @State private var anthropicKeyInput: String = ""
     @State private var openaiKeyInput: String = ""
@@ -280,25 +308,26 @@ struct OnboardingView: View {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: "magnifyingglass.circle.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(Color.accentColor)
+            Image("Broom")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 100, height: 100)
 
-            Text("Welcome to Bert")
+            Text("Hello, I'm Bert.")
                 .font(.title)
                 .fontWeight(.semibold)
 
-            Text("Search your iMessage history with full-text and semantic search.")
+            Text("Add an API key to enable conversation summaries and action item tracking, or skip and use search only.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
 
             VStack(alignment: .leading, spacing: 16) {
-                Text("Add an API key (optional)")
+                Text("API key (optional)")
                     .font(.headline)
 
-                Text("An Anthropic or OpenAI key enables conversation summaries and action item tracking. You can skip this and add one later in Settings.")
+                Text("You can also add one later in Settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -328,15 +357,15 @@ struct OnboardingView: View {
 
             HStack(spacing: 16) {
                 Button("Skip") {
-                    onComplete()
+                    onComplete(false)
                 }
                 .buttonStyle(.bordered)
 
-                Button("Get Started") {
+                Button("Continue") {
                     Task { await saveAndContinue() }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isSaving)
+                .disabled(isSaving || (anthropicKeyInput.isEmpty && openaiKeyInput.isEmpty))
             }
 
             Spacer()
@@ -356,19 +385,66 @@ struct OnboardingView: View {
             updates["openaiApiKey"] = openaiKeyInput
         }
 
-        if !updates.isEmpty {
-            do {
-                try await viewModel.updateSettings(updates)
-                viewModel.hasApiKey = true
-            } catch {
-                errorMessage = "Failed to save API key. The server may still be starting — try again in a moment."
-                isSaving = false
-                return
+        do {
+            if !anthropicKeyInput.isEmpty {
+                KeychainManager.anthropicApiKey = anthropicKeyInput
             }
+            if !openaiKeyInput.isEmpty {
+                KeychainManager.openaiApiKey = openaiKeyInput
+            }
+            try await viewModel.updateSettings(updates)
+            viewModel.hasApiKey = true
+        } catch {
+            errorMessage = "Failed to save API key. The server may still be starting — try again in a moment."
+            isSaving = false
+            return
         }
 
         isSaving = false
-        onComplete()
+        onComplete(true)
+    }
+}
+
+// MARK: - Onboarding: Metadata Generation Progress
+
+/// Shown after the user enters an API key post-import.
+/// Triggers metadata generation (summaries + task extraction) and shows progress.
+struct OnboardingMetadataView: View {
+    @ObservedObject var viewModel: SearchViewModel
+    let onComplete: () -> Void
+
+    @State private var didStart = false
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image("Broom")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 100, height: 100)
+
+            Text("Hello, I'm Bert.")
+                .font(.title)
+                .fontWeight(.semibold)
+
+            Text(viewModel.lastSyncMessage ?? "Generating conversation summaries...")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 60)
+
+            ProgressView()
+                .padding(.top, 4)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            guard !didStart else { return }
+            didStart = true
+            viewModel.startMetadataGeneration(onComplete: onComplete)
+        }
     }
 }
 

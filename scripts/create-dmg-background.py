@@ -62,7 +62,7 @@ ctx.strokePath()
 
 // --- Instructions box ---
 // Top at y=210 from top → CG bottom = height - 210*s - boxHeight
-let boxHeight = 120.0 * s
+let boxHeight = 140.0 * s
 let boxBottom = CGFloat(height) - 210.0 * s - boxHeight
 let boxRect = NSRect(x: 30 * s, y: boxBottom, width: CGFloat(width) - 60 * s, height: boxHeight)
 
@@ -93,8 +93,9 @@ let bodyAttrs: [NSAttributedString.Key: Any] = [
 let lineSpacing = 20.0 * s
 let lines: [(String, CGFloat)] = [
     ("1. Drag Bert to Applications", titleY - lineSpacing),
-    ("2. Grant Full Disk Access: System Settings \\u{{2192}} Privacy & Security \\u{{2192}} Full Disk Access", titleY - lineSpacing * 2),
-    ("3. Launch Bert and follow the setup wizard", titleY - lineSpacing * 3),
+    ("2. Launch Bert", titleY - lineSpacing * 2),
+    ("3. Grant Full Disk Access: System Settings \\u{{2192}} Privacy & Security \\u{{2192}} Full Disk Access", titleY - lineSpacing * 3),
+    ("4. Quit and Reopen", titleY - lineSpacing * 4),
 ]
 for (text, y) in lines {{
     (text as NSString).draw(at: NSPoint(x: 48 * s, y: y), withAttributes: bodyAttrs)

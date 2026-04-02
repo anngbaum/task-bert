@@ -24,7 +24,8 @@ interface EmbedOptions {
 }
 
 export async function embed(options: EmbedOptions = {}): Promise<void> {
-  const batchSize = options.batchSize || 50;
+  const batchSize = options.batchSize || 200;
+  const inferenceChunkSize = 8; // Small chunks to avoid blocking the event loop too long
 
   const db = await getPglite();
 
@@ -87,23 +88,39 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
     }
 
     try {
-      const texts = rows.map((r) => r.text);
-      const embeddings = texts.length > 0 ? await getEmbeddingsBatch(texts) : [];
+      // Process embeddings in smaller inference chunks for progress updates,
+      // but batch the DB writes per fetch batch
+      const allEmbeddings: number[][] = [];
 
-      for (let i = 0; i < rows.length; i++) {
-        const embeddingStr = `[${embeddings[i].join(',')}]`;
+      for (let ci = 0; ci < rows.length; ci += inferenceChunkSize) {
+        const chunkRows = rows.slice(ci, ci + inferenceChunkSize);
+        const chunkTexts = chunkRows.map((r) => r.text);
+        const chunkEmbeddings = await getEmbeddingsBatch(chunkTexts);
+        allEmbeddings.push(...chunkEmbeddings);
+
+        // Update progress after each inference chunk
+        const chunkProcessed = processed + skipIds.length + ci + chunkRows.length;
+        const pct = ((chunkProcessed / total) * 100).toFixed(1);
+        const overallPct = 25 + Math.round((chunkProcessed / total) * 60);
+        updateSyncProgress('embedding', `Embedding messages: ${chunkProcessed.toLocaleString()}/${total.toLocaleString()} (${pct}%)`, overallPct);
+        process.stdout.write(`  Progress: ${chunkProcessed}/${total} (${pct}%)\r`);
+
+        // Yield to the event loop so the HTTP server can respond to health checks
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
+      // Batch update all embeddings in a single query
+      if (rows.length > 0) {
+        const values = rows.map((r, i) => {
+          const embeddingStr = `[${allEmbeddings[i].join(',')}]`;
+          return `(${r.id}, '${embeddingStr}'::vector)`;
+        }).join(', ');
         await db.query(
-          `UPDATE message SET embedding = $1::vector WHERE id = $2`,
-          [embeddingStr, rows[i].id]
+          `UPDATE message SET embedding = v.emb FROM (VALUES ${values}) AS v(id, emb) WHERE message.id = v.id`
         );
       }
 
       processed += allRows.length;
-      const pct = ((processed / total) * 100).toFixed(1);
-      // Map embedding progress (0-100%) into the 25-85% overall range
-      const overallPct = 25 + Math.round((processed / total) * 60);
-      updateSyncProgress('embedding', `Embedding messages: ${processed.toLocaleString()}/${total.toLocaleString()} (${pct}%)`, overallPct);
-      process.stdout.write(`  Progress: ${processed}/${total} (${pct}%)\r`);
     } catch (err) {
       errors++;
       console.error(`\nError processing batch at id ${rows[0].id}: ${err}`);

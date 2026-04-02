@@ -53,6 +53,12 @@ struct ServerStartingView: View {
 struct ServerInitializingView: View {
     let progress: ServerManager.SyncProgress
 
+    @State private var anthropicKeyInput: String = ""
+    @State private var openaiKeyInput: String = ""
+    @State private var keySaved: Bool = false
+    @State private var keySaving: Bool = false
+    @State private var keyError: String? = nil
+
     private var stageLabel: String {
         switch progress.stage {
         case "setup": return "Preparing"
@@ -64,20 +70,28 @@ struct ServerInitializingView: View {
         }
     }
 
+    /// Whether the sync is still in an early stage where the key can be added in time for metadata
+    private var showKeyInput: Bool {
+        !keySaved && (progress.stage == "" || progress.stage == "setup" || progress.stage == "etl" || progress.stage == "embedding")
+    }
+
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "magnifyingglass.circle.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(Color.accentColor)
+            Spacer()
 
-            Text("Setting up Bert...")
-                .font(.title3)
-                .fontWeight(.medium)
+            Image("Broom")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 100, height: 100)
+
+            Text("Getting Started")
+                .font(.title)
+                .fontWeight(.semibold)
 
             VStack(spacing: 8) {
                 ProgressView(value: progress.percent, total: 100)
                     .progressViewStyle(.linear)
-                    .frame(width: 300)
+                    .frame(width: 340)
 
                 HStack {
                     Text(stageLabel)
@@ -91,7 +105,7 @@ struct ServerInitializingView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
-                .frame(width: 300)
+                .frame(width: 340)
 
                 if !progress.detail.isEmpty {
                     Text(progress.detail)
@@ -102,13 +116,120 @@ struct ServerInitializingView: View {
                 }
             }
 
-            Text("This may take a few minutes on first launch.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            ProgressView()
                 .padding(.top, 4)
+
+            // API key input — shown while import is still running
+            if showKeyInput {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Add an API key while you wait (optional)")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    Text("Enables conversation summaries and action items. You can also add this later in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Anthropic API Key")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        SecureField("sk-ant-...", text: $anthropicKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("OpenAI API Key")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        SecureField("sk-...", text: $openaiKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    if let error = keyError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
+                    Button {
+                        Task { await saveKey() }
+                    } label: {
+                        if keySaving {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                Text("Saving...")
+                            }
+                        } else {
+                            Text("Save Key")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(keySaving || (anthropicKeyInput.isEmpty && openaiKeyInput.isEmpty))
+                }
+                .frame(width: 340)
+                .padding(.top, 4)
+            } else if keySaved {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                    Text("API key saved — summaries will be generated automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.3), value: progress.percent)
+    }
+
+    private func readAuthToken() -> String? {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let tokenPath = appSupport.appendingPathComponent("Bert/auth-token").path
+        return try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func saveKey() async {
+        keySaving = true
+        keyError = nil
+
+        // Save to Keychain
+        if !anthropicKeyInput.isEmpty {
+            KeychainManager.anthropicApiKey = anthropicKeyInput
+        }
+        if !openaiKeyInput.isEmpty {
+            KeychainManager.openaiApiKey = openaiKeyInput
+        }
+
+        // Push to server in-memory
+        var updates: [String: String] = [:]
+        if !anthropicKeyInput.isEmpty { updates["anthropicApiKey"] = anthropicKeyInput }
+        if !openaiKeyInput.isEmpty { updates["openaiApiKey"] = openaiKeyInput }
+
+        do {
+            let url = URL(string: "http://localhost:11488/api/settings")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "PUT"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = readAuthToken() {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: updates)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                keyError = "Server returned an error — try again in a moment."
+                return
+            }
+            keySaved = true
+        } catch {
+            keyError = "Couldn't reach server yet — try again in a moment."
+        }
+        keySaving = false
     }
 }
 

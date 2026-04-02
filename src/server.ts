@@ -101,7 +101,7 @@ async function runSync(mode: 'hardReset' | 'pullLatest' | 'resync' = 'pullLatest
   try {
     const result = await unifiedSync({
       mode,
-      llmConfig: getLLMConfig('summary'),
+      llmConfig: () => getLLMConfig('summary'),
     });
     console.log(`[scheduler] Sync done (${mode}): ${result.newMessageCount} new messages across ${result.affectedChatIds.length} chats.`);
     initialSyncDone = true;
@@ -467,8 +467,11 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
   const params = url.searchParams;
 
-  // Allow /health without auth (needed for startup polling before token is read)
-  if (url.pathname !== '/health' && !checkAuth(req)) {
+  // Allow /health and /api/settings without auth
+  // /health: needed for startup polling before token is read
+  // /api/settings PUT: needed during init screen before app has read the auth token
+  const authExempt = url.pathname === '/health' || (url.pathname === '/api/settings' && req.method === 'PUT');
+  if (!authExempt && !checkAuth(req)) {
     errorResponse(res, 'Unauthorized', 401);
     return;
   }
@@ -1169,11 +1172,16 @@ async function start(): Promise<void> {
     }
   }
 
-  // If we already have synced data, let the app be usable immediately
+  // If we already have synced data and won't hard reset, let the app be usable immediately.
+  // Skip this if a hard reset is pending — the UI should stay on the initializing screen
+  // until the full import + metadata generation finishes.
   if (!hardReset) {
     try {
       const result = await pg.query('SELECT last_synced FROM sync_meta WHERE id = 1');
-      if (result.rows.length > 0) {
+      const countResult = await pg.query('SELECT COUNT(*) as count FROM message');
+      const row = countResult.rows[0] as Record<string, any> | undefined;
+      const msgCount = parseInt(row ? row.count : '0', 10);
+      if (result.rows.length > 0 && msgCount >= 10) {
         console.log('[startup] Existing data found — app is ready, sync will run in background.');
         initialSyncDone = true;
       }

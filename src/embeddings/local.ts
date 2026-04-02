@@ -28,10 +28,12 @@ export async function getEmbedding(text: string): Promise<number[]> {
 
 export async function getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
   const pipe = await getEmbedder();
+  const output = await pipe(texts, { pooling: 'mean', normalize: true });
+  const dim = output.dims[output.dims.length - 1];
+  const data = output.data as Float32Array;
   const results: number[][] = [];
-  for (const text of texts) {
-    const output = await pipe(text, { pooling: 'mean', normalize: true });
-    results.push(Array.from(output.data as Float32Array));
+  for (let i = 0; i < texts.length; i++) {
+    results.push(Array.from(data.slice(i * dim, (i + 1) * dim)));
   }
   return results;
 }

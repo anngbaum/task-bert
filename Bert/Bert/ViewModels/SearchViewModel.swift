@@ -487,6 +487,39 @@ final class SearchViewModel: ObservableObject {
         isSyncing = false
     }
 
+    /// Triggers metadata generation (conversation summaries + task extraction) via soft-reset.
+    /// Used during onboarding when the user enters an API key after the initial import already finished.
+    @MainActor
+    func startMetadataGeneration(onComplete: @escaping () -> Void) {
+        isSyncing = true
+        lastSyncMessage = "Generating conversation summaries..."
+
+        Task {
+            do {
+                try await service.softReset()
+
+                // Poll health endpoint until metadata generation finishes
+                while true {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    let health = try await service.fetchHealth()
+                    if health.ready && !health.syncing {
+                        break
+                    }
+                    lastSyncMessage = progressMessage(health.progress)
+                }
+
+                lastSyncMessage = "Summaries complete"
+                await loadChatMetadata()
+                await loadActions()
+            } catch {
+                lastSyncMessage = "Failed: \(error.localizedDescription)"
+            }
+
+            isSyncing = false
+            onComplete()
+        }
+    }
+
     @MainActor
     func hardReset() async {
         // Signal ContentView to push to triage/loading immediately
