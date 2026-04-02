@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct OpenSearchApp: App {
+struct BertApp: App {
     @StateObject private var serverManager = ServerManager()
 
     var body: some Scene {
@@ -70,7 +70,7 @@ struct ServerInitializingView: View {
                 .font(.system(size: 48))
                 .foregroundStyle(Color.accentColor)
 
-            Text("Setting up OpenSearch...")
+            Text("Setting up Bert...")
                 .font(.title3)
                 .fontWeight(.medium)
 
@@ -126,7 +126,7 @@ struct FullDiskAccessView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("OpenSearch needs Full Disk Access to read your iMessage history. Messages are stored locally and only sent to an LLM if you enable conversation summaries or action items.")
+            Text("Bert needs Full Disk Access to read your iMessage history. Messages are stored locally and only sent to an LLM if you enable conversation summaries or action items.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -134,7 +134,7 @@ struct FullDiskAccessView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 instructionRow(step: "1", text: "Click \"Open System Settings\" below")
-                instructionRow(step: "2", text: "Find OpenSearch in the list and toggle it on")
+                instructionRow(step: "2", text: "Find Bert in the list and toggle it on")
                 instructionRow(step: "3", text: "Come back here and click \"I've Enabled It\"")
             }
             .padding(.horizontal, 40)

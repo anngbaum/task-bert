@@ -22,7 +22,6 @@ struct TaskItem: Identifiable, Decodable {
     var type: String  // "action" or "waiting"
     let trigger_hint: String?
     var bucket: String?  // "todo", "upcoming", or "waiting" — computed by server
-    let key_event_id: Int?
     let completed: Bool
     let reminder_id: String?
     let created_at: Date

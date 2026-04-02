@@ -12,7 +12,7 @@
 		3E766BA82F636A0000A531F1 /* ChatMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E766BA72F636A0000A531F1 /* ChatMetadata.swift */; };
 		3E766BAA2F636A0E00A531F1 /* ChatMetadataPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E766BA92F636A0E00A531F1 /* ChatMetadataPanelView.swift */; };
 		3EE72FDD2F70449B005A7A64 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3EE72FDC2F70449B005A7A64 /* Assets.xcassets */; };
-		A10001 /* OpenSearchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001 /* OpenSearchApp.swift */; };
+		A10001 /* BertApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001 /* BertApp.swift */; };
 		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10002 /* ContentView.swift */; };
 		A10003 /* SearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003 /* SearchResult.swift */; };
 		A10004 /* ContextMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004 /* ContextMessage.swift */; };
@@ -45,7 +45,7 @@
 		3E766BA72F636A0000A531F1 /* ChatMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMetadata.swift; sourceTree = "<group>"; };
 		3E766BA92F636A0E00A531F1 /* ChatMetadataPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMetadataPanelView.swift; sourceTree = "<group>"; };
 		3EE72FDC2F70449B005A7A64 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		B10001 /* OpenSearchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSearchApp.swift; sourceTree = "<group>"; };
+		B10001 /* BertApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BertApp.swift; sourceTree = "<group>"; };
 		B10002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B10003 /* SearchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResult.swift; sourceTree = "<group>"; };
 		B10004 /* ContextMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextMessage.swift; sourceTree = "<group>"; };
@@ -71,7 +71,7 @@
 		B10026 /* EventsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsPanelView.swift; sourceTree = "<group>"; };
 		B10027 /* LeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardView.swift; sourceTree = "<group>"; };
 		B10028 /* TaskTriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskTriageView.swift; sourceTree = "<group>"; };
-		C10001 /* OpenSearch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenSearch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C10001 /* Bert.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bert.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,15 +88,15 @@
 		E10001 = {
 			isa = PBXGroup;
 			children = (
-				E10002 /* OpenSearch */,
+				E10002 /* Bert */,
 				E10009 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		E10002 /* OpenSearch */ = {
+		E10002 /* Bert */ = {
 			isa = PBXGroup;
 			children = (
-				B10001 /* OpenSearchApp.swift */,
+				B10001 /* BertApp.swift */,
 				3EE72FDC2F70449B005A7A64 /* Assets.xcassets */,
 				B10015 /* Info.plist */,
 				E10003 /* Models */,
@@ -105,7 +105,7 @@
 				E10006 /* Views */,
 				E10008 /* Extensions */,
 			);
-			path = OpenSearch;
+			path = Bert;
 			sourceTree = "<group>";
 		};
 		E10003 /* Models */ = {
@@ -174,7 +174,7 @@
 		E10009 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				C10001 /* OpenSearch.app */,
+				C10001 /* Bert.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -182,9 +182,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F10001 /* OpenSearch */ = {
+		F10001 /* Bert */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = G10003 /* Build configuration list for PBXNativeTarget "OpenSearch" */;
+			buildConfigurationList = G10003 /* Build configuration list for PBXNativeTarget "Bert" */;
 			buildPhases = (
 				F10004 /* Bundle Server */,
 				F10002 /* Sources */,
@@ -195,9 +195,9 @@
 			);
 			dependencies = (
 			);
-			name = OpenSearch;
-			productName = OpenSearch;
-			productReference = C10001 /* OpenSearch.app */;
+			name = Bert;
+			productName = Bert;
+			productReference = C10001 /* Bert.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -215,7 +215,7 @@
 					};
 				};
 			};
-			buildConfigurationList = G10001 /* Build configuration list for PBXProject "OpenSearch" */;
+			buildConfigurationList = G10001 /* Build configuration list for PBXProject "Bert" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -228,7 +228,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				F10001 /* OpenSearch */,
+				F10001 /* Bert */,
 			);
 		};
 /* End PBXProject section */
@@ -270,7 +270,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10001 /* OpenSearchApp.swift in Sources */,
+				A10001 /* BertApp.swift in Sources */,
 				3E766BA42F63688000A531F1 /* ActionItem.swift in Sources */,
 				A10002 /* ContentView.swift in Sources */,
 				A10003 /* SearchResult.swift in Sources */,
@@ -425,14 +425,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = OpenSearch/OpenSearch.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Bert/Bert.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = RU2LA2R7SA;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = OpenSearch/Info.plist;
+				INFOPLIST_FILE = Bert/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -441,7 +441,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.opensearch.app;
-				PRODUCT_NAME = OpenSearch;
+				PRODUCT_NAME = Bert;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
@@ -452,14 +452,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = OpenSearch/OpenSearch.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Bert/Bert.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = RU2LA2R7SA;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = OpenSearch/Info.plist;
+				INFOPLIST_FILE = Bert/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -468,7 +468,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.opensearch.app;
-				PRODUCT_NAME = OpenSearch;
+				PRODUCT_NAME = Bert;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
@@ -478,7 +478,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		G10001 /* Build configuration list for PBXProject "OpenSearch" */ = {
+		G10001 /* Build configuration list for PBXProject "Bert" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				G10004 /* Debug */,
@@ -487,7 +487,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		G10003 /* Build configuration list for PBXNativeTarget "OpenSearch" */ = {
+		G10003 /* Build configuration list for PBXNativeTarget "Bert" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				G10006 /* Debug */,

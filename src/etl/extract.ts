@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { RawMessage, Handle, Chat, ChatMessageJoin, ChatHandleJoin, Attachment, MessageAttachmentJoin } from '../types.js';
+import { hasColumn } from '../db/sqlite-reader.js';
 
 const APPLE_EPOCH_OFFSET = 978307200; // seconds between 1970-01-01 and 2001-01-01
 
@@ -40,13 +41,17 @@ export function* extractMessagesBatched(
     db.prepare(`SELECT COUNT(*) as count FROM message ${whereClause}`).get() as { count: number }
   ).count;
 
+  // associated_message_emoji was added in macOS 14+; older versions don't have it
+  const hasEmoji = hasColumn(db, 'message', 'associated_message_emoji');
+  const emojiCol = hasEmoji ? 'associated_message_emoji,' : '';
+
   for (let offset = 0; offset < count; offset += batchSize) {
-    const batch = db
+    const rows = db
       .prepare(
         `SELECT ROWID as id, guid, text, attributedBody, is_from_me, date,
                 date_read, date_delivered, handle_id, service,
                 associated_message_type, associated_message_guid,
-                associated_message_emoji, thread_originator_guid,
+                ${emojiCol} thread_originator_guid,
                 balloon_bundle_id,
                 CASE WHEN cache_has_attachments = 1 THEN 1 ELSE 0 END as has_attachments
          FROM message
@@ -54,8 +59,12 @@ export function* extractMessagesBatched(
          ORDER BY ROWID
          LIMIT ? OFFSET ?`
       )
-      .all(batchSize, offset) as RawMessage[];
-    yield batch;
+      .all(batchSize, offset) as any[];
+    // Normalize: ensure associated_message_emoji is always present
+    if (!hasEmoji) {
+      for (const row of rows) row.associated_message_emoji = null;
+    }
+    yield rows as RawMessage[];
   }
 }
 

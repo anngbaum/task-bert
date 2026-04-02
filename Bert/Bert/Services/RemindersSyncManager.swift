@@ -6,7 +6,7 @@ final class RemindersSyncManager: @unchecked Sendable {
 
     private let store = EKEventStore()
     private let service = SearchService()
-    private let listName = "OpenSearch"
+    private let listName = "Bert"
     private var observer: NSObjectProtocol?
 
     /// Called when reminders are completed externally (e.g. in Reminders.app).

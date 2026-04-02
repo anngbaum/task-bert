@@ -449,8 +449,7 @@ struct RemindMeFormView: View {
                             title: title,
                             date: hasDate ? date : nil,
                             priority: priority,
-                            chatId: event.chat_id,
-                            keyEventId: event.id
+                            chatId: event.chat_id
                         )
                         dismiss()
                     }

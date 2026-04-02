@@ -50,6 +50,8 @@ export async function initSchema(): Promise<void> {
     await db.exec('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS trigger_hint TEXT;');
     // Migration: drop activate_at if it exists (consolidated into date)
     try { await db.exec('ALTER TABLE tasks DROP COLUMN IF EXISTS activate_at;'); } catch { /* ignore */ }
+    // Migration: drop key_event_id (linkage removed — tasks link to messages instead)
+    try { await db.exec('ALTER TABLE tasks DROP COLUMN IF EXISTS key_event_id;'); } catch { /* ignore */ }
   } catch {
     // Columns may already exist
   }
@@ -80,8 +82,8 @@ export async function initSchema(): Promise<void> {
           }
           if (has_followups) {
             await db.exec(`
-              INSERT INTO tasks (chat_id, message_id, title, date, priority, key_event_id, completed, created_at)
-              SELECT chat_id, message_id, title, date, 'low', key_event_id, completed, created_at
+              INSERT INTO tasks (chat_id, message_id, title, date, priority, completed, created_at)
+              SELECT chat_id, message_id, title, date, 'low', completed, created_at
               FROM suggested_follow_ups
             `);
             console.log('[migration] Migrated suggested_follow_ups → tasks (priority: low)');

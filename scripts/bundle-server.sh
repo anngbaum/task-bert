@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Bundle the Node.js server for embedding inside OpenSearch.app
+# Bundle the Node.js server for embedding inside Bert.app
 # Output: build/server/ directory ready to copy into app Resources
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

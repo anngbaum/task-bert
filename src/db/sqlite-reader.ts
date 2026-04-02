@@ -12,6 +12,12 @@ export function openSqlite(): Database.Database {
   return db;
 }
 
+/** Check if a column exists on a table in the SQLite database. */
+export function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return cols.some((c) => c.name === column);
+}
+
 export function verifySqliteTables(db: Database.Database): void {
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type='table'")

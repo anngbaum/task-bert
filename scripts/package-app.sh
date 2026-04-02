@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# Package OpenSearch.app for distribution
+# Package Bert.app for distribution
 # Steps: bundle server → archive Xcode project → notarize → create DMG
-# Output: dist/OpenSearch.dmg
+# Output: dist/Bert.dmg
 #
 # Prerequisites:
 #   - Apple Developer account signed in to Xcode
@@ -13,9 +13,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-XCODE_DIR="$PROJECT_DIR/OpenSearch"
+XCODE_DIR="$PROJECT_DIR/Bert"
 DIST_DIR="$PROJECT_DIR/dist"
-ARCHIVE_PATH="$PROJECT_DIR/build/OpenSearch.xcarchive"
+ARCHIVE_PATH="$PROJECT_DIR/build/Bert.xcarchive"
 EXPORT_PATH="$PROJECT_DIR/build/export"
 
 # Load .env if present
@@ -47,7 +47,7 @@ if [ -z "$SIGNING_IDENTITY" ]; then
   exit 1
 fi
 
-echo "=== Packaging OpenSearch for distribution ==="
+echo "=== Packaging Bert for distribution ==="
 echo "Team ID: $TEAM_ID"
 echo "Apple ID: $APPLE_ID"
 echo "Signing identity: $SIGNING_IDENTITY"
@@ -63,7 +63,7 @@ echo "--- Step 2/4: Archiving Xcode project ---"
 rm -rf "$ARCHIVE_PATH"
 cd "$XCODE_DIR"
 xcodebuild archive \
-  -scheme OpenSearch \
+  -scheme Bert \
   -configuration Release \
   -destination 'platform=macOS' \
   -archivePath "$ARCHIVE_PATH" \
@@ -71,7 +71,7 @@ xcodebuild archive \
   CODE_SIGN_STYLE=Automatic \
   ENABLE_HARDENED_RUNTIME=YES \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
-  CODE_SIGN_ENTITLEMENTS="$XCODE_DIR/OpenSearch/OpenSearch.entitlements" \
+  CODE_SIGN_ENTITLEMENTS="$XCODE_DIR/Bert/Bert.entitlements" \
   2>&1 | grep -E '(ARCHIVE|error:|warning:.*Bundle|Signing)' || true
 
 if [ ! -d "$ARCHIVE_PATH" ]; then
@@ -110,9 +110,9 @@ xcodebuild -exportArchive \
   -exportOptionsPlist "$EXPORT_PLIST" \
   2>&1 | grep -E '(Export|error:|notari)' || true
 
-APP_PATH="$EXPORT_PATH/OpenSearch.app"
+APP_PATH="$EXPORT_PATH/Bert.app"
 if [ ! -d "$APP_PATH" ]; then
-  echo "error: Export failed — OpenSearch.app not found in $EXPORT_PATH"
+  echo "error: Export failed — Bert.app not found in $EXPORT_PATH"
   echo "Check that your Apple Developer account is signed in to Xcode."
   exit 1
 fi
@@ -120,7 +120,7 @@ echo "Export succeeded: $APP_PATH"
 
 # Sign embedded server binaries with hardened runtime inside the exported app
 echo "Signing embedded server binaries..."
-ENTITLEMENTS="$XCODE_DIR/OpenSearch/OpenSearch.entitlements"
+ENTITLEMENTS="$XCODE_DIR/Bert/Bert.entitlements"
 APP_SERVER_DIR="$APP_PATH/Contents/Resources/server"
 
 # Sign native .node addons first (innermost binaries first)
@@ -144,8 +144,8 @@ echo "App signature valid."
 
 # Submit app for notarization
 echo "Submitting app for notarization..."
-ditto -c -k --keepParent "$APP_PATH" "$PROJECT_DIR/build/OpenSearch-app.zip"
-NOTARY_OUTPUT=$(xcrun notarytool submit "$PROJECT_DIR/build/OpenSearch-app.zip" \
+ditto -c -k --keepParent "$APP_PATH" "$PROJECT_DIR/build/Bert-app.zip"
+NOTARY_OUTPUT=$(xcrun notarytool submit "$PROJECT_DIR/build/Bert-app.zip" \
   --apple-id "$APPLE_ID" \
   --password "$APP_PASSWORD" \
   --team-id "$TEAM_ID" \
@@ -177,7 +177,7 @@ for i in 1 2 3 4 5; do
   sleep 15
 done
 
-rm -f "$PROJECT_DIR/build/OpenSearch-app.zip"
+rm -f "$PROJECT_DIR/build/Bert-app.zip"
 echo "App notarization complete."
 echo ""
 
@@ -186,9 +186,9 @@ echo "--- Step 4/4: Creating DMG ---"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-DMG_PATH="$DIST_DIR/OpenSearch.dmg"
+DMG_PATH="$DIST_DIR/Bert.dmg"
 DMG_TEMP="$PROJECT_DIR/build/dmg-staging"
-DMG_RW="$PROJECT_DIR/build/OpenSearch-rw.dmg"
+DMG_RW="$PROJECT_DIR/build/Bert-rw.dmg"
 DMG_BG="$PROJECT_DIR/build/dmg-background.png"
 
 # Generate background image with arrow and instructions
@@ -205,7 +205,7 @@ cp "$DMG_BG" "$DMG_TEMP/.background/background.png"
 # Create read-write DMG first (so we can customize it)
 rm -f "$DMG_RW"
 hdiutil create \
-  -volname "OpenSearch" \
+  -volname "Bert" \
   -srcfolder "$DMG_TEMP" \
   -ov \
   -format UDRW \
@@ -214,8 +214,8 @@ hdiutil create \
 
 rm -rf "$DMG_TEMP"
 
-# Detach any existing OpenSearch volumes to avoid name collisions
-hdiutil detach "/Volumes/OpenSearch" -force 2>/dev/null || true
+# Detach any existing Bert volumes to avoid name collisions
+hdiutil detach "/Volumes/Bert" -force 2>/dev/null || true
 
 # Mount the read-write DMG and customize with AppleScript
 MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$DMG_RW" | grep '/Volumes/' | sed 's/.*\/Volumes/\/Volumes/')
@@ -228,7 +228,7 @@ sleep 2
 
 osascript -e '
 tell application "Finder"
-  set theVolume to POSIX file "/Volumes/OpenSearch" as alias
+  set theVolume to POSIX file "/Volumes/Bert" as alias
   tell folder theVolume
     open
     delay 2
@@ -244,7 +244,7 @@ tell application "Finder"
     set background picture of viewOptions to file ".background:background.png"
 
     -- Position app icon on the left, Applications on the right
-    set position of item "OpenSearch.app" of container window to {165, 80}
+    set position of item "Bert.app" of container window to {165, 80}
     set position of item "Applications" of container window to {495, 80}
 
     close
@@ -311,7 +311,7 @@ echo "The app and DMG are both signed with Developer ID and notarized by Apple."
 echo "Recipients can open it without any Gatekeeper warnings."
 echo ""
 echo "To install:"
-echo "  1. Open OpenSearch.dmg"
-echo "  2. Drag OpenSearch to the Applications folder"
-echo "  3. Grant Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add OpenSearch"
-echo "  4. Launch OpenSearch"
+echo "  1. Open Bert.dmg"
+echo "  2. Drag Bert to the Applications folder"
+echo "  3. Grant Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add Bert"
+echo "  4. Launch Bert"

@@ -1,4 +1,4 @@
-# OpenSearch Security Assessment
+# Bert Security Assessment
 
 **Date:** 2026-03-22
 **Scope:** Full application — Swift macOS client, Node.js backend server, data layer
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-OpenSearch is a locally-hosted iMessage search engine with a native macOS frontend and a bundled Node.js backend. Because it processes highly sensitive personal data (private messages) and transmits subsets of that data to third-party LLM APIs, the attack surface warrants careful attention despite the application being "local only."
+Bert is a locally-hosted iMessage search engine with a native macOS frontend and a bundled Node.js backend. Because it processes highly sensitive personal data (private messages) and transmits subsets of that data to third-party LLM APIs, the attack surface warrants careful attention despite the application being "local only."
 
 **Critical findings: 2** | **High: 3** | **Medium: 4** | **Low: 3**
 
@@ -19,7 +19,7 @@ OpenSearch is a locally-hosted iMessage search engine with a native macOS fronte
 ### C-1: API Keys Stored in Plaintext on Disk
 
 **File:** `src/server.ts:72-78`
-**Description:** Anthropic and OpenAI API keys are written to `settings.json` as unencrypted plaintext JSON via `fs.writeFileSync`. Any process or user with read access to `~/Library/Application Support/OpenSearch/settings.json` can steal these keys.
+**Description:** Anthropic and OpenAI API keys are written to `settings.json` as unencrypted plaintext JSON via `fs.writeFileSync`. Any process or user with read access to `~/Library/Application Support/Bert/settings.json` can steal these keys.
 
 **Impact:** Full compromise of the user's Anthropic/OpenAI accounts. Keys can be used to run arbitrary LLM workloads at the user's expense, or to exfiltrate data from the Anthropic/OpenAI account dashboards.
 
@@ -164,7 +164,7 @@ This can leak internal paths, database errors, or stack details to any caller.
 
 ### L-2: `ServerManager` Trusts Any Process on Port 11488
 
-**File:** `OpenSearch/OpenSearch/Services/ServerManager.swift:41-55`
+**File:** `Bert/Bert/Services/ServerManager.swift:41-55`
 **Description:** The `checkExistingServer()` function accepts any HTTP 200 response on `localhost:11488/health` as proof that the legitimate server is running. A malicious process that binds to port 11488 first could impersonate the server and intercept all API traffic, including API keys sent via `PUT /api/settings`.
 
 **Impact:** If a rogue process races to bind the port before the app launches, it can intercept API keys and all message queries.

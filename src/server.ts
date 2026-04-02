@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { getPglite, closePglite, initSchema, verifyDatabase, wipePgliteData } from './db/pglite-client.js';
-import { openSqlite } from './db/sqlite-reader.js';
+import { openSqlite, hasColumn } from './db/sqlite-reader.js';
 import { DATA_DIR } from './config.js';
 import { searchFTS } from './search/fts.js';
 import { searchVector } from './search/vector.js';
@@ -480,7 +480,7 @@ const server = http.createServer(async (req, res) => {
         }
         case '/api/tasks/create': {
           const body = await readBody(req);
-          let parsed: { title?: string; date?: string; priority?: string; type?: string; trigger_hint?: string; chat_id?: number; key_event_id?: number };
+          let parsed: { title?: string; date?: string; priority?: string; type?: string; trigger_hint?: string; chat_id?: number };
           try {
             parsed = JSON.parse(body);
           } catch {
@@ -496,8 +496,8 @@ const server = http.createServer(async (req, res) => {
             const priority = parsed.priority === 'high' ? 'high' : 'low';
             const type = parsed.type === 'waiting' ? 'waiting' : 'action';
             const result = await db.query(
-              `INSERT INTO tasks (chat_id, title, date, priority, type, trigger_hint, key_event_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-              [parsed.chat_id ?? 0, parsed.title, parsed.date ?? null, priority, type, parsed.trigger_hint ?? null, parsed.key_event_id ?? null]
+              `INSERT INTO tasks (chat_id, title, date, priority, type, trigger_hint) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+              [parsed.chat_id ?? 0, parsed.title, parsed.date ?? null, priority, type, parsed.trigger_hint ?? null]
             );
             jsonResponse(res, { ok: true, task: result.rows[0] });
           } catch (err) {
@@ -653,7 +653,7 @@ const server = http.createServer(async (req, res) => {
 
             const result = await runAgent(parsed.query, llmConfig, onProgress);
             console.log(`[agent] Completed: ${result.tool_calls_count} tool calls, ${result.message_links.length} links`);
-            res.write(JSON.stringify({ stream: 'result', answer: result.answer, message_links: result.message_links, tool_calls_count: result.tool_calls_count, more_messages_needed: result.more_messages_needed ?? null }) + '\n');
+            res.write(JSON.stringify({ stream: 'result', answer: result.answer, message_links: result.message_links, tool_calls_count: result.tool_calls_count, data_range: result.data_range ?? null }) + '\n');
             res.end();
           } catch (err) {
             console.error('[agent] Error:', err);
@@ -935,19 +935,23 @@ const server = http.createServer(async (req, res) => {
 
           // associated_message_guid format: "p:<part>/<original_guid>"
           // Use substr + instr to extract the original guid after "/"
+          // associated_message_emoji was added in macOS 14+; older versions don't have it
+          const hasEmoji = hasColumn(sqlite, 'message', 'associated_message_emoji');
+          const emojiSelect = hasEmoji ? 'r.associated_message_emoji as emoji,' : '';
+          const emojiGroupBy = hasEmoji ? ', r.associated_message_emoji' : '';
           const reactions = sqlite.prepare(
             `SELECT
                orig.is_from_me as orig_is_from_me,
                orig.handle_id as orig_handle_id,
                r.associated_message_type as reaction_type,
-               r.associated_message_emoji as emoji,
+               ${emojiSelect}
                COUNT(*) as cnt
              FROM message r
              JOIN message orig ON orig.guid = substr(r.associated_message_guid, instr(r.associated_message_guid, '/') + 1)
              JOIN chat_message_join cmj ON cmj.message_id = orig.ROWID
              WHERE cmj.chat_id = ?
                AND r.associated_message_type BETWEEN 2000 AND 2006
-             GROUP BY orig.is_from_me, orig.handle_id, r.associated_message_type, r.associated_message_emoji`
+             GROUP BY orig.is_from_me, orig.handle_id, r.associated_message_type${emojiGroupBy}`
           ).all(chatId) as { orig_is_from_me: number; orig_handle_id: number; reaction_type: number; emoji: string | null; cnt: number }[];
 
           // Message counts per participant (excluding reactions/edits)
@@ -1002,7 +1006,7 @@ async function start(): Promise<void> {
 
   // Start the HTTP server immediately so health checks respond while we initialize
   server.listen(PORT, HOST, () => {
-    console.log(`OpenSearch API server running at http://${HOST}:${PORT}`);
+    console.log(`Bert API server running at http://${HOST}:${PORT}`);
     console.log('Endpoints:');
     console.log('  GET /api/search?q=...&mode=text|semantic|hybrid&limit=20');
     console.log('  GET /api/ask?q=...&limit=20');

@@ -801,9 +801,9 @@ final class SearchViewModel: ObservableObject {
     }
 
     @MainActor
-    func createTask(title: String, date: Date?, priority: String, chatId: Int?, keyEventId: Int?) async {
+    func createTask(title: String, date: Date?, priority: String, chatId: Int?) async {
         do {
-            try await service.createTask(title: title, date: date, priority: priority, chatId: chatId, keyEventId: keyEventId)
+            try await service.createTask(title: title, date: date, priority: priority, chatId: chatId)
             await loadActions()
         } catch {
             // Silently fail

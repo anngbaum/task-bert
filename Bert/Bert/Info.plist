@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>OpenSearch</string>
+	<string>Bert</string>
 	<key>CFBundleName</key>
-	<string>OpenSearch</string>
+	<string>Bert</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>OpenSearch needs calendar access to add events from your conversations.</string>
+	<string>Bert needs calendar access to add events from your conversations.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>OpenSearch needs Reminders access to sync your tasks as reminders.</string>
+	<string>Bert needs Reminders access to sync your tasks as reminders.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

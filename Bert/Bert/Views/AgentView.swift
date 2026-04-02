@@ -171,12 +171,6 @@ struct AgentResponseView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, steps.isEmpty ? 8 : 0)
 
-                // Import more messages prompt
-                if let moreNeeded = response.more_messages_needed {
-                    ImportMoreMessagesView(moreNeeded: moreNeeded, viewModel: viewModel)
-                        .padding(.horizontal, 16)
-                }
-
                 // Referenced messages with footnote numbers
                 if !referencedLinks.isEmpty {
                     Divider()
@@ -196,9 +190,159 @@ struct AgentResponseView: View {
                         }
                     }
                 }
+                // Date range banner — always visible
+                if let range = response.data_range, let earliest = range.earliest, let days = range.days_covered {
+                    DataRangeBannerView(earliest: earliest, daysCovered: days, noResults: referencedLinks.isEmpty)
+                        .padding(.horizontal, 16)
+                }
             }
             .padding(.bottom, 16)
         }
+    }
+}
+
+// MARK: - Data Range Banner
+
+struct DataRangeBannerView: View {
+    let earliest: String
+    let daysCovered: Int
+    let noResults: Bool
+    @State private var showImport = false
+    @State private var selectedDate: Date
+    @State private var isImporting = false
+    @State private var importDone = false
+    @State private var progressMessage = ""
+    @State private var errorMessage: String?
+
+    init(earliest: String, daysCovered: Int, noResults: Bool) {
+        self.earliest = earliest
+        self.daysCovered = daysCovered
+        self.noResults = noResults
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let parsed = fmt.date(from: earliest) ?? Date()
+        _selectedDate = State(initialValue: Calendar.current.date(byAdding: .day, value: -60, to: parsed) ?? Date())
+    }
+
+    private var formattedEarliest: String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        guard let date = fmt.date(from: earliest) else { return earliest }
+        let display = DateFormatter()
+        display.dateFormat = "MMMM d, yyyy"
+        return display.string(from: date)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text("Searching ~\(daysCovered) days of messages (since \(formattedEarliest))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !showImport && !importDone {
+                    Button {
+                        withAnimation { showImport = true }
+                    } label: {
+                        Text("Import more")
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.accentColor.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
+            }
+
+            if importDone {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                    Text("Import complete. Try your search again.")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                }
+            } else if isImporting {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(progressMessage.isEmpty ? "Starting import..." : progressMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let error = errorMessage {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            } else if showImport {
+                HStack(spacing: 8) {
+                    Text("Import from:")
+                        .font(.caption2)
+                    DatePicker("", selection: $selectedDate, in: ...Date(), displayedComponents: .date)
+                        .labelsHidden()
+                        .controlSize(.small)
+                    Button {
+                        Task { await importMore() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle")
+                            Text("Import")
+                                .font(.caption2)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(noResults ? 12 : 8)
+        .background(noResults ? Color.orange.opacity(0.08) : Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: noResults ? 8 : 6))
+        .onAppear {
+            if noResults { showImport = true }
+        }
+    }
+
+    private func importMore() async {
+        isImporting = true
+        errorMessage = nil
+        progressMessage = "Starting import..."
+
+        do {
+            let service = SearchService()
+            try await service.startImportOlderMessages(since: selectedDate)
+
+            while true {
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+                let health = try await service.fetchHealth()
+
+                if health.syncing, let progress = health.progress {
+                    let pct = Int(progress.percent)
+                    if progress.stage == "etl" {
+                        progressMessage = progress.detail.isEmpty ? "Importing messages... (\(pct)%)" : "\(progress.detail) (\(pct)%)"
+                    } else if progress.stage == "embedding" {
+                        progressMessage = "Generating embeddings... (\(pct)%)"
+                    } else if progress.stage == "done" {
+                        break
+                    } else {
+                        progressMessage = progress.detail.isEmpty ? "Working... (\(pct)%)" : progress.detail
+                    }
+                } else if !health.syncing {
+                    break
+                }
+            }
+
+            importDone = true
+        } catch {
+            errorMessage = "Import failed: \(error.localizedDescription)"
+        }
+        isImporting = false
     }
 }
 
@@ -458,143 +602,3 @@ struct MessageLinkRow: View {
     }
 }
 
-// MARK: - Import More Messages
-
-struct ImportMoreMessagesView: View {
-    let moreNeeded: SearchService.MoreMessagesNeeded
-    let viewModel: SearchViewModel
-    @State private var isImporting = false
-    @State private var importDone = false
-    @State private var progressMessage: String = ""
-    @State private var errorMessage: String?
-    @State private var selectedDate: Date
-
-    init(moreNeeded: SearchService.MoreMessagesNeeded, viewModel: SearchViewModel) {
-        self.moreNeeded = moreNeeded
-        self.viewModel = viewModel
-        // Default to 60 days before the earliest imported message
-        let earliest = Self.parseDate(moreNeeded.earliest_message)
-        let defaultDate = Calendar.current.date(byAdding: .day, value: -60, to: earliest ?? Date()) ?? Date()
-        _selectedDate = State(initialValue: defaultDate)
-    }
-
-    private static func parseDate(_ str: String?) -> Date? {
-        guard let str else { return nil }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return iso.date(from: str) ?? {
-            iso.formatOptions = [.withInternetDateTime]
-            return iso.date(from: str)
-        }()
-    }
-
-    private var earliestDate: Date? {
-        Self.parseDate(moreNeeded.earliest_message)
-    }
-
-    private var formattedEarliest: String {
-        guard let date = earliestDate else { return "unknown" }
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MMMM d, yyyy"
-        return fmt.string(from: date)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .foregroundStyle(.orange)
-                Text("Messages only imported since \(formattedEarliest)")
-                    .font(.caption)
-                    .fontWeight(.medium)
-            }
-
-            Text("The answer may be in older messages. Import more to expand the search.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if importDone {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Import complete. Try your search again.")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
-            } else if isImporting {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(progressMessage.isEmpty ? "Starting import..." : progressMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if let error = errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            } else {
-                HStack(spacing: 8) {
-                    Text("Import from:")
-                        .font(.caption)
-                    DatePicker("", selection: $selectedDate, in: ...Date(), displayedComponents: .date)
-                        .labelsHidden()
-                        .controlSize(.small)
-
-                    Button {
-                        Task { await importMore() }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.circle")
-                            Text("Import")
-                                .font(.caption)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-        }
-        .padding(12)
-        .background(Color.orange.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func importMore() async {
-        isImporting = true
-        errorMessage = nil
-        progressMessage = "Starting import..."
-
-        do {
-            let service = SearchService()
-            try await service.startImportOlderMessages(since: selectedDate)
-
-            // Poll /health for progress
-            while true {
-                try await Task.sleep(nanoseconds: 1_500_000_000)
-                let health = try await service.fetchHealth()
-
-                if health.syncing, let progress = health.progress {
-                    let pct = Int(progress.percent)
-
-                    if progress.stage == "etl" {
-                        progressMessage = progress.detail.isEmpty ? "Importing messages... (\(pct)%)" : "\(progress.detail) (\(pct)%)"
-                    } else if progress.stage == "embedding" {
-                        progressMessage = "Generating embeddings... (\(pct)%)"
-                    } else if progress.stage == "done" {
-                        break
-                    } else {
-                        progressMessage = progress.detail.isEmpty ? "Working... (\(pct)%)" : progress.detail
-                    }
-                } else if !health.syncing {
-                    break
-                }
-            }
-
-            importDone = true
-        } catch {
-            errorMessage = "Import failed: \(error.localizedDescription)"
-        }
-        isImporting = false
-    }
-}

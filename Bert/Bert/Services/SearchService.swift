@@ -336,7 +336,7 @@ actor SearchService {
         }
     }
 
-    func createTask(title: String, date: Date?, priority: String, chatId: Int?, keyEventId: Int?) async throws {
+    func createTask(title: String, date: Date?, priority: String, chatId: Int?) async throws {
         let url = baseURL.appendingPathComponent("api/tasks/create")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -348,9 +348,6 @@ actor SearchService {
         }
         if let chatId {
             body["chat_id"] = chatId
-        }
-        if let keyEventId {
-            body["key_event_id"] = keyEventId
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -402,19 +399,20 @@ actor SearchService {
         var id: Int { message_id }
     }
 
-    struct MoreMessagesNeeded: Decodable {
-        let earliest_message: String?
-        let reason: String
+    struct DataRange: Decodable {
+        let earliest: String?
+        let latest: String?
+        let days_covered: Int?
     }
 
     struct AgentResponse: Decodable {
         let answer: String
         let message_links: [AgentMessageLink]
         let tool_calls_count: Int
-        let more_messages_needed: MoreMessagesNeeded?
+        let data_range: DataRange?
 
         enum CodingKeys: String, CodingKey {
-            case answer, message_links, tool_calls_count, more_messages_needed
+            case answer, message_links, tool_calls_count, data_range
         }
     }
 

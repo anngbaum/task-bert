@@ -6,10 +6,10 @@ A local search engine for your iMessage history. Reads your macOS `chat.db`, loa
 
 ## Quick Start (App)
 
-1. Download `OpenSearch.zip` and unzip
-2. Move `OpenSearch.app` to `/Applications`
-3. Grant **Full Disk Access**: System Settings > Privacy & Security > Full Disk Access > add OpenSearch
-4. Launch OpenSearch
+1. Download `Bert.zip` and unzip
+2. Move `Bert.app` to `/Applications`
+3. Grant **Full Disk Access**: System Settings > Privacy & Security > Full Disk Access > add Bert
+4. Launch Bert
 5. Open Settings (gear icon) and add your Anthropic or OpenAI API key
 6. Click Sync to import messages
 
@@ -74,7 +74,7 @@ npm run serve        # Start the API server on port 11488
 npm run serve:reset  # Hard reset: wipe DB and re-ingest everything
 ```
 
-Then open the Xcode project at `OpenSearch/OpenSearch.xcodeproj` and run, or use the CLI directly.
+Then open the Xcode project at `Bert/Bert.xcodeproj` and run, or use the CLI directly.
 
 ### CLI Commands
 
@@ -115,7 +115,7 @@ npm start -- status
 
 ```bash
 npm run bundle    # Bundle Node.js server into build/server/
-npm run package   # Full pipeline: bundle → Xcode build → dist/OpenSearch.zip
+npm run package   # Full pipeline: bundle → Xcode build → dist/Bert.zip
 ```
 
 ## Architecture
@@ -168,9 +168,9 @@ src/
   display/
     formatter.ts          # Terminal output formatting
 
-OpenSearch/               # SwiftUI macOS app
-  OpenSearch/
-    OpenSearchApp.swift   # App entry point + server lifecycle
+Bert/                     # SwiftUI macOS app
+  Bert/
+    BertApp.swift         # App entry point + server lifecycle
     Services/
       ServerManager.swift         # Manages bundled Node.js server process
       SearchService.swift         # HTTP client for the API

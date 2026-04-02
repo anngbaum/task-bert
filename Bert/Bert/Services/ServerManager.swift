@@ -38,10 +38,10 @@ final class ServerManager: ObservableObject {
         Bundle.main.resourceURL!.appendingPathComponent("server")
     }
 
-    /// Persistent data directory (~/Library/Application Support/OpenSearch/)
+    /// Persistent data directory (~/Library/Application Support/Bert/)
     private var dataDirectoryURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("OpenSearch")
+        return appSupport.appendingPathComponent("Bert")
     }
 
     /// Attempt to read the iMessage database. The attempt itself triggers macOS
@@ -123,7 +123,7 @@ final class ServerManager: ObservableObject {
         let logURL = logFileURL
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let logHandle = try? FileHandle(forWritingTo: logURL)
-        let header = "=== OpenSearch server started at \(ISO8601DateFormatter().string(from: Date())) ===\n"
+        let header = "=== Bert server started at \(ISO8601DateFormatter().string(from: Date())) ===\n"
         logHandle?.write(header.data(using: .utf8)!)
 
         let proc = Process()

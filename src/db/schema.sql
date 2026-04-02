@@ -79,7 +79,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority TEXT NOT NULL DEFAULT 'low',
   type TEXT NOT NULL DEFAULT 'action',
   trigger_hint TEXT,
-  key_event_id INTEGER REFERENCES key_events(id),
   completed BOOLEAN DEFAULT FALSE,
   reminder_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

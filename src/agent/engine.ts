@@ -79,19 +79,6 @@ You can call this multiple times with increasing "after" values (e.g. 10, then 2
       },
     },
   },
-  {
-    name: 'request_more_messages',
-    description: `Signal that the imported messages don't go far back enough to answer the user's question. Call this when your searches return no results and you believe the answer exists in older messages that haven't been imported yet.
-
-ONLY call this as a LAST RESORT after trying multiple search strategies. Do NOT call this if you found relevant results but they didn't fully answer the question — that's different from missing data.`,
-    parameters: {
-      type: 'object' as const,
-      properties: {
-        reason: { type: 'string', description: 'Brief explanation of why more messages are needed' },
-      },
-      required: ['reason'],
-    },
-  },
 ];
 
 // --- Tool execution ---
@@ -202,16 +189,6 @@ async function executeGetChatSummaries(args: Record<string, unknown>): Promise<u
   return result.rows;
 }
 
-async function executeRequestMoreMessages(args: Record<string, unknown>): Promise<{ earliest_message: string | null; reason: string }> {
-  const db = await getPglite();
-  const result = await db.query('SELECT MIN(date) as earliest FROM message WHERE date IS NOT NULL');
-  const earliest = (result.rows[0] as any)?.earliest ?? null;
-  return {
-    earliest_message: earliest ? new Date(earliest).toISOString() : null,
-    reason: (args.reason as string) || 'More historical messages needed',
-  };
-}
-
 async function executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
     case 'search_messages':
@@ -222,8 +199,6 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       return executeResolveContact(args);
     case 'get_chat_summaries':
       return executeGetChatSummaries(args);
-    case 'request_more_messages':
-      return executeRequestMoreMessages(args);
     default:
       return { error: `Unknown tool: ${name}` };
   }
@@ -279,10 +254,11 @@ export interface AgentResponse {
   answer: string;
   message_links: MessageLink[];
   tool_calls_count: number;
-  /** Set when the agent called request_more_messages — signals the UI to offer importing older messages */
-  more_messages_needed?: {
-    earliest_message: string | null;
-    reason: string;
+  /** The date range of imported messages, so the UI can inform the user */
+  data_range?: {
+    earliest: string | null;
+    latest: string | null;
+    days_covered: number | null;
   };
 }
 
@@ -314,8 +290,6 @@ function describeToolCall(name: string, args: Record<string, unknown>): string {
       return `Looking up contact "${args.name}"`;
     case 'get_chat_summaries':
       return 'Fetching recent conversation summaries';
-    case 'request_more_messages':
-      return `Requesting older messages: ${args.reason}`;
     default:
       return `Calling ${name}`;
   }
@@ -341,10 +315,6 @@ function describeToolResult(name: string, result: unknown): string {
       const rows = result as unknown[];
       return `Got ${rows.length} conversation summaries`;
     }
-    case 'request_more_messages': {
-      const info = result as { earliest_message: string | null };
-      return `Requesting more messages (earliest: ${info.earliest_message ?? 'unknown'})`;
-    }
     default:
       return 'Done';
   }
@@ -352,12 +322,35 @@ function describeToolResult(name: string, result: unknown): string {
 
 // --- System prompt ---
 
-function buildAgentSystemPrompt(): string {
+async function getDataRange(): Promise<{ earliest: string | null; latest: string | null; totalMessages: number; daysCovered: number | null }> {
+  const db = await getPglite();
+  const earliest = await db.query('SELECT MIN(date) as earliest FROM message WHERE date IS NOT NULL');
+  const latest = await db.query('SELECT MAX(date) as latest FROM message WHERE date IS NOT NULL');
+  const count = await db.query('SELECT count(*) as cnt FROM message');
+  const earliestDate = (earliest.rows[0] as any)?.earliest ?? null;
+  const latestDate = (latest.rows[0] as any)?.latest ?? null;
+  let daysCovered: number | null = null;
+  if (earliestDate && latestDate) {
+    daysCovered = Math.round((new Date(latestDate).getTime() - new Date(earliestDate).getTime()) / (1000 * 60 * 60 * 24));
+  }
+  return {
+    earliest: earliestDate ? new Date(earliestDate).toISOString().split('T')[0] : null,
+    latest: latestDate ? new Date(latestDate).toISOString().split('T')[0] : null,
+    totalMessages: parseInt((count.rows[0] as any)?.cnt ?? '0', 10),
+    daysCovered,
+  };
+}
+
+function buildAgentSystemPrompt(dataRange: { earliest: string | null; daysCovered: number | null }): string {
   const now = new Date();
   const today = now.toISOString().split('T')[0];
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
 
-  return `You are an intelligent assistant that helps users search and explore their iMessage history. Today is ${dayOfWeek}, ${today}.
+  const rangeNote = dataRange.earliest && dataRange.daysCovered
+    ? `\n\nIMPORTANT: You only have access to messages from the last ~${dataRange.daysCovered} days (since ${dataRange.earliest}). If your searches return no results, the answer may be in older messages outside this window.`
+    : '';
+
+  return `You are an intelligent assistant that helps users search and explore their iMessage history. Today is ${dayOfWeek}, ${today}.${rangeNote}
 
 You have access to tools that let you search messages, look up contacts, get conversation context, and view chat summaries. Use these tools to thoroughly answer the user's question.
 
@@ -365,17 +358,15 @@ STRATEGY:
 1. If the user mentions a person's name, ALWAYS call resolve_contact FIRST to find their exact name in the database. Names must match exactly for filters to work.
 2. When searching for messages involving a person, use the "with_contact" parameter. It finds ALL messages in conversations with that person — both what they said and what you said to them.
 3. Start with short, focused search queries (1-3 keywords). Long queries often return nothing.
-4. If a search returns 0 results, try: different keywords, "text" mode for exact matches, or remove filters and search more broadly.
+4. If a search returns 0 results, try different keywords or "text" mode for exact matches.
 5. Search results include a few surrounding messages for context. If you see something promising but the answer isn't visible yet, call get_context on that message ID with a larger "after" value (e.g. 15 or 20) to read further into the conversation.
-   NOTE: Only a limited time window of messages has been imported. If resolve_contact finds a person but they have 0 messages, or if all your searches return 0 results, their messages likely exist but are outside the imported window. In this case, call request_more_messages instead of telling the user no messages exist.
-6. You can make multiple searches with different queries to be thorough.
-7. Do NOT use the "after" or "before" date filters unless the user explicitly mentions a time range (e.g. "last week", "in January", "recently"). By default, search across all time.
+6. Do NOT use the "after" or "before" date filters unless the user explicitly mentions a time range (e.g. "last week", "in January", "recently"). By default, search across all time.
+7. If you can't find what the user is looking for after a few searches, let them know — the answer may be in older messages outside the imported window.
 
 RESPONSE FORMAT:
 - Give a clear, concise answer to the user's question
 - Reference specific messages using [[MSG-ID]] notation (e.g. [[MSG-12345]]) — these will become clickable links
 - Include relevant quotes from messages to support your answer
-- If you can't find what the user is looking for, say so and suggest what they might try differently
 
 IMPORTANT:
 - Always cite your sources with [[MSG-ID]] references
@@ -393,6 +384,8 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
   const client = new Anthropic({ apiKey });
   const model = config.model ?? 'claude-haiku-4-5-20251001';
 
+  const dataRange = await getDataRange();
+
   // Convert tools to Anthropic format
   const anthropicTools: Anthropic.Messages.Tool[] = TOOLS.map(t => ({
     name: t.name,
@@ -406,17 +399,17 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
 
   const collectedLinks: MessageLink[] = [];
   let toolCallsCount = 0;
-  let moreMessagesNeeded: AgentResponse['more_messages_needed'];
+
   const MAX_ITERATIONS = 10;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     console.log(`[agent] Iteration ${i + 1}, sending ${messages.length} messages to ${model}`);
-    onProgress?.({ type: 'thinking', description: i === 0 ? 'Thinking...' : 'Analyzing results...' });
+    onProgress?.({ type: 'thinking', description: i === 0 ? `Searching ${dataRange.daysCovered ? `~${dataRange.daysCovered} days` : ''} of messages...` : 'Analyzing results...' });
 
     const response = await client.messages.create({
       model,
       max_tokens: 4096,
-      system: buildAgentSystemPrompt(),
+      system: buildAgentSystemPrompt(dataRange),
       tools: anthropicTools,
       messages,
     });
@@ -474,7 +467,7 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
         }
       }
 
-      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
+      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
     }
 
     // Execute tool calls
@@ -526,10 +519,6 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
               });
             }
           }
-        } else if (toolUse.name === 'request_more_messages') {
-          const moreResult = result as { earliest_message: string | null; reason: string };
-          moreMessagesNeeded = moreResult;
-          formattedResult = `The earliest imported message is from ${moreResult.earliest_message ?? 'unknown date'}. The user will be prompted to import older messages. Please let the user know you couldn't find the answer in the currently imported messages and suggest they import more.`;
         } else {
           formattedResult = JSON.stringify(result, null, 2);
         }
@@ -546,7 +535,7 @@ async function runAnthropicAgent(query: string, config: LLMConfig, onProgress?: 
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
+  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
 }
 
 // --- OpenAI agent loop ---
@@ -558,6 +547,8 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
   const client = new OpenAI({ apiKey });
   const model = config.model ?? 'gpt-4o-mini';
 
+  const dataRange = await getDataRange();
+
   const openaiTools: OpenAI.ChatCompletionTool[] = TOOLS.map(t => ({
     type: 'function' as const,
     function: {
@@ -568,18 +559,18 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
   }));
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'system', content: buildAgentSystemPrompt() },
+    { role: 'system', content: buildAgentSystemPrompt(dataRange) },
     { role: 'user', content: query },
   ];
 
   const collectedLinks: MessageLink[] = [];
   let toolCallsCount = 0;
-  let moreMessagesNeeded: AgentResponse['more_messages_needed'];
+
   const MAX_ITERATIONS = 10;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     console.log(`[agent] Iteration ${i + 1}, sending ${messages.length} messages to ${model}`);
-    onProgress?.({ type: 'thinking', description: i === 0 ? 'Thinking...' : 'Analyzing results...' });
+    onProgress?.({ type: 'thinking', description: i === 0 ? `Searching ${dataRange.daysCovered ? `~${dataRange.daysCovered} days` : ''} of messages...` : 'Analyzing results...' });
 
     const response = await client.chat.completions.create({
       model,
@@ -635,7 +626,7 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
         }
       }
 
-      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
+      return { answer, message_links: collectedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
     }
 
     // Execute tool calls
@@ -686,10 +677,6 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
               });
             }
           }
-        } else if (fn.name === 'request_more_messages') {
-          const moreResult = result as { earliest_message: string | null; reason: string };
-          moreMessagesNeeded = moreResult;
-          formattedResult = `The earliest imported message is from ${moreResult.earliest_message ?? 'unknown date'}. The user will be prompted to import older messages. Please let the user know you couldn't find the answer in the currently imported messages and suggest they import more.`;
         } else {
           formattedResult = JSON.stringify(result, null, 2);
         }
@@ -704,7 +691,7 @@ async function runOpenAIAgent(query: string, config: LLMConfig, onProgress?: Pro
     }
   }
 
-  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount, more_messages_needed: moreMessagesNeeded };
+  return { answer: 'Agent reached maximum iterations without producing a final answer.', message_links: collectedLinks, tool_calls_count: toolCallsCount, data_range: { earliest: dataRange.earliest, latest: dataRange.latest, days_covered: dataRange.daysCovered } };
 }
 
 // --- Main entry point ---

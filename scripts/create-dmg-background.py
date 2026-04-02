@@ -92,9 +92,9 @@ let bodyAttrs: [NSAttributedString.Key: Any] = [
 ]
 let lineSpacing = 20.0 * s
 let lines: [(String, CGFloat)] = [
-    ("1. Drag OpenSearch to Applications", titleY - lineSpacing),
+    ("1. Drag Bert to Applications", titleY - lineSpacing),
     ("2. Grant Full Disk Access: System Settings \\u{{2192}} Privacy & Security \\u{{2192}} Full Disk Access", titleY - lineSpacing * 2),
-    ("3. Launch OpenSearch and follow the setup wizard", titleY - lineSpacing * 3),
+    ("3. Launch Bert and follow the setup wizard", titleY - lineSpacing * 3),
 ]
 for (text, y) in lines {{
     (text as NSString).draw(at: NSPoint(x: 48 * s, y: y), withAttributes: bodyAttrs)

@@ -281,7 +281,7 @@ struct OnboardingView: View {
                 .font(.system(size: 64))
                 .foregroundStyle(Color.accentColor)
 
-            Text("Welcome to OpenSearch")
+            Text("Welcome to Bert")
                 .font(.title)
                 .fontWeight(.semibold)
 
