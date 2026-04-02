@@ -183,7 +183,6 @@ echo ""
 
 # --- Step 4: Create distributable DMG ---
 echo "--- Step 4/4: Creating DMG ---"
-rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
 DMG_PATH="$DIST_DIR/Bert.dmg"
