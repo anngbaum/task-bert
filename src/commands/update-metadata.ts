@@ -241,7 +241,7 @@ export async function updateMetadata(config: LLMConfig, options: MetadataOptions
 
     for (let batchStart = 0; batchStart < chats.length; batchStart += SUMMARY_CONCURRENCY) {
       const batch = chats.slice(batchStart, batchStart + SUMMARY_CONCURRENCY);
-      updateSyncProgress('metadata', `Summarizing chats ${batchStart + 1}–${Math.min(batchStart + SUMMARY_CONCURRENCY, chats.length)} of ${chats.length}...`, 85 + Math.round((batchStart / chats.length) * 12));
+      updateSyncProgress('metadata', `Summarizing chats ${batchStart + 1}–${Math.min(batchStart + SUMMARY_CONCURRENCY, chats.length)} of ${chats.length}...`, 85 + Math.round((batchStart / chats.length) * 5));
 
       const results = await Promise.allSettled(batch.map(async (chat, j) => {
         const i = batchStart + j;
@@ -473,10 +473,14 @@ async function extractEvents(
   const systemPrompt = `Extract future events from this iMessage conversation. Today is ${ctx.today}.
 
 Return events/plans/milestones with dates TODAY or later. Skip past events.
-Be specific — include venue, time, and confirmed details.
+Be specific — include venue, time, and confirmed details. If timing is confirmed, include the time.
 Each message is tagged [MSG-###]. Use message_id to identify the source.
 
 Your response is the COMPLETE list. Items you omit will be removed.
+
+Focus on specific events with dates and/or locations that would be useful to remember. Ignore vague plans with no date or location.
+
+Include important milestones that might be considerate to follow up on (e.g. starting a new job, a pregnancy due date, birthday, etc.)
 
 Respond with ONLY valid JSON:
 { "events": [{ "message_id": 456, "title": "Dinner at Nobu", "date": "2026-04-05T19:00:00${ctx.tzOffset}", "location": "Nobu Malibu" }] }
@@ -544,7 +548,7 @@ Only create tasks where Me has a clear obligation or someone is clearly waiting 
 
 ## WHAT TO EXTRACT
 
-1. **Unanswered questions** — Someone asked Me a direct question and Me has NOT replied later in the conversation.
+1. **Unanswered questions** — Someone asked Me a direct, specific question and Me has NOT replied.
    - Asked before ${ctx.twentyFourHoursAgo} → type: "action", priority: "high"
    - Asked before ${ctx.twelveHoursAgo} → type: "action", priority: "low"
    - Asked less than 12h ago → skip (too soon)
@@ -563,7 +567,7 @@ Only create tasks where Me has a clear obligation or someone is clearly waiting 
 - A general ask in a group chat that is not directed at Me
 - Something Me already did in the conversation (asked, replied, sent, confirmed)
 - A confirmed plan with no remaining action for Me
-- Vague ideas with no commitment ("that would be fun", "we should sometime")
+- General ideas with no commitment ("that would be fun", "we should sometime")
 - Rhetorical questions, greetings, casual banter
 - Verification codes, OTPs, spam
 - Venmo requests or automated payment notifications
@@ -624,6 +628,7 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
   }
 
   console.log(`[actions] Checking ${chats.length} chat(s) — ${recentChats.length} recent, ${olderChats.length} older (events-only)...`);
+  updateSyncProgress('metadata', 'Extracting events and tasks...', 90);
 
   let totalNew = 0;
   const allChats = [...olderChats, ...recentChats];
@@ -632,6 +637,7 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
   // Process chats in parallel batches
   for (let batchStart = 0; batchStart < allChats.length; batchStart += CONCURRENCY) {
     const batch = allChats.slice(batchStart, batchStart + CONCURRENCY);
+    updateSyncProgress('metadata', `Extracting events/tasks ${batchStart + 1}–${Math.min(batchStart + CONCURRENCY, allChats.length)} of ${allChats.length}...`, 90 + Math.round((batchStart / allChats.length) * 9));
 
     // Pre-fetch reminder mappings for this batch (DB reads before parallel LLM calls)
     const batchContext = await Promise.all(batch.map(async (chat, j) => {

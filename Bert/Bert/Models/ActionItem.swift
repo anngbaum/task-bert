@@ -10,6 +10,14 @@ struct KeyEvent: Identifiable, Decodable {
     let removed: Bool?
     let created_at: Date
     let chat_name: String?
+
+    /// Formatted time string, or nil for all-day events (stored as noon by convention).
+    var formattedTime: String? {
+        guard let date else { return nil }
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        if comps.hour == 12 && comps.minute == 0 { return nil }
+        return date.formatted(.dateTime.hour().minute())
+    }
 }
 
 struct TaskItem: Identifiable, Decodable {

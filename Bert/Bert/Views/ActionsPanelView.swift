@@ -429,9 +429,16 @@ struct EventRowView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(event.title)
-                    .font(.caption)
-                    .lineLimit(2)
+                HStack(spacing: 4) {
+                    Text(event.title)
+                        .font(.caption)
+                        .lineLimit(2)
+                    if let time = event.formattedTime {
+                        Text(time)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                    }
+                }
 
                 if let chatName = event.chat_name {
                     Label(chatName, systemImage: "bubble.left")
