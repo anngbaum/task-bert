@@ -353,7 +353,7 @@ struct OnboardingWelcomeView: View {
                 }
 
                 Label {
-                    Text("You can optionally add an LLM API key. Messages are sent straight to the LLM to summarize conversations, find to-dos, and spot calendar events — then organized for you inside Bert.")
+                    Text("You can optionally add an LLM API key. Messages are sent **straight to the LLM** to summarize conversations, find to-dos, and spot calendar events — then organized for you inside Bert.")
                 } icon: {
                     Image(systemName: "sparkles")
                         .foregroundStyle(.secondary)
@@ -369,10 +369,15 @@ struct OnboardingWelcomeView: View {
             .font(.callout)
             .frame(width: 380)
 
-            Button("Get Started") {
-                onContinue()
+            HStack(spacing: 16) {
+                Link("See the Code", destination: URL(string: "https://github.com/anngbaum/task-bert")!)
+                    .buttonStyle(.bordered)
+
+                Button("Get Started") {
+                    onContinue()
+                }
+                .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.borderedProminent)
 
             Spacer()
         }
