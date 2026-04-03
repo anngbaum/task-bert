@@ -97,6 +97,9 @@ final class SearchViewModel: ObservableObject {
     // API key state — controls whether LLM-powered tabs are available
     @Published var hasApiKey: Bool = KeychainManager.anthropicApiKey != nil || KeychainManager.openaiApiKey != nil
 
+    // API key error detected during LLM calls (shown as banner in main UI)
+    @Published var apiKeyError: String? = nil
+
     // Set to true when a hard reset starts — ContentView observes this to push to triage/loading
     @Published var didStartHardReset: Bool = false
 
@@ -172,6 +175,7 @@ final class SearchViewModel: ObservableObject {
             let health = try await service.fetchHealth()
             if health.needsApiKeys == true { await pushApiKeysToServer() }
             updateEmbeddingState(health.embedding)
+            updateApiKeyError(health.apiKeyError)
             if health.syncing {
                 isSyncing = true
                 lastSyncMessage = progressMessage(health.progress)
@@ -182,6 +186,7 @@ final class SearchViewModel: ObservableObject {
                     let h = try await service.fetchHealth()
                     if h.needsApiKeys == true { await pushApiKeysToServer() }
                     updateEmbeddingState(h.embedding)
+                    updateApiKeyError(h.apiKeyError)
                     if !h.syncing && h.ready {
                         break
                     }
@@ -217,6 +222,32 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
+    @MainActor
+    private func updateApiKeyError(_ error: APIClient.ApiKeyErrorInfo?) {
+        if let err = error {
+            apiKeyError = "Your \(err.provider == "anthropic" ? "Anthropic" : "OpenAI") API key is invalid. Update it in Settings."
+        } else {
+            apiKeyError = nil
+        }
+    }
+
+    @MainActor
+    func validateKey(provider: String, apiKey: String) async -> String? {
+        do {
+            let result = try await service.validateKey(provider: provider, apiKey: apiKey)
+            if result.valid {
+                // Clear any existing error for this provider
+                if apiKeyError?.contains(provider == "anthropic" ? "Anthropic" : "OpenAI") == true {
+                    apiKeyError = nil
+                }
+                return nil
+            }
+            return result.error ?? "Invalid API key"
+        } catch {
+            return nil // Network error — don't block save
+        }
+    }
+
     /// Poll /health for background embedding progress until it completes.
     private func startEmbeddingPoll() {
         embeddingPollTask?.cancel()
@@ -227,6 +258,7 @@ final class SearchViewModel: ObservableObject {
                 do {
                     let health = try await self.service.fetchHealth()
                     self.updateEmbeddingState(health.embedding)
+                    self.updateApiKeyError(health.apiKeyError)
                     if !self.isEmbedding { return }
                 } catch {
                     // Ignore transient errors

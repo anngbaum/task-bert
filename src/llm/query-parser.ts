@@ -39,6 +39,22 @@ let anthropicClientKey: string | undefined = undefined;
 let openaiClient: OpenAI | null = null;
 let openaiClientKey: string | undefined = undefined;
 
+// Tracks the last API key authentication error detected during LLM calls
+let lastApiKeyError: { provider: string; message: string; timestamp: string } | null = null;
+
+export function getApiKeyError() { return lastApiKeyError; }
+export function clearApiKeyError() { lastApiKeyError = null; }
+
+function isAuthError(err: unknown): boolean {
+  if (err && typeof err === 'object') {
+    const status = (err as any).status ?? (err as any).statusCode;
+    if (status === 401 || status === 403) return true;
+    const msg = (err as any).message ?? '';
+    if (typeof msg === 'string' && (msg.includes('authentication') || msg.includes('invalid.*api.*key') || msg.includes('Incorrect API key'))) return true;
+  }
+  return false;
+}
+
 function getAnthropicClient(apiKey?: string): Anthropic {
   const key = apiKey || undefined;
   if (!key) {
@@ -46,7 +62,7 @@ function getAnthropicClient(apiKey?: string): Anthropic {
   }
   if (!anthropicClient || key !== anthropicClientKey) {
     anthropicClientKey = key;
-    anthropicClient = new Anthropic({ apiKey: key });
+    anthropicClient = new Anthropic({ apiKey: key, timeout: 60_000 });
   }
   return anthropicClient;
 }
@@ -58,7 +74,7 @@ function getOpenAIClient(apiKey?: string): OpenAI {
   }
   if (!openaiClient || key !== openaiClientKey) {
     openaiClientKey = key;
-    openaiClient = new OpenAI({ apiKey: key });
+    openaiClient = new OpenAI({ apiKey: key, timeout: 60_000 });
   }
   return openaiClient;
 }
@@ -148,30 +164,82 @@ async function callLLMOnce(
 ): Promise<string> {
   const provider = getModelProvider(model);
 
-  if (provider === 'openai') {
-    const hasKey = !!config.openaiApiKey;
-    console.log(`[llm] Calling ${model} (provider: openai, key present: ${hasKey})`);
-    const client = getOpenAIClient(config.openaiApiKey);
-    const response = await client.chat.completions.create({
-      model,
-      max_tokens: maxTokens,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: userMessage },
-      ],
-    });
-    return response.choices[0]?.message?.content ?? '';
-  } else {
-    const hasKey = !!config.anthropicApiKey;
-    console.log(`[llm] Calling ${model} (provider: anthropic, key present: ${hasKey})`);
-    const client = getAnthropicClient(config.anthropicApiKey);
-    const response = await client.messages.create({
-      model,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: 'user', content: userMessage }],
-    });
-    return response.content[0].type === 'text' ? response.content[0].text : '';
+  try {
+    if (provider === 'openai') {
+      const hasKey = !!config.openaiApiKey;
+      console.log(`[llm] Calling ${model} (provider: openai, key present: ${hasKey})`);
+      const client = getOpenAIClient(config.openaiApiKey);
+      const response = await client.chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userMessage },
+        ],
+      });
+      return response.choices[0]?.message?.content ?? '';
+    } else {
+      const hasKey = !!config.anthropicApiKey;
+      console.log(`[llm] Calling ${model} (provider: anthropic, key present: ${hasKey})`);
+      const client = getAnthropicClient(config.anthropicApiKey);
+      const response = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      return response.content[0].type === 'text' ? response.content[0].text : '';
+    }
+  } catch (err) {
+    if (isAuthError(err)) {
+      const msg = (err as any).message ?? 'Invalid API key';
+      lastApiKeyError = { provider, message: msg, timestamp: new Date().toISOString() };
+      console.error(`[llm] API key error for ${provider}: ${msg}`);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Validate an API key by making a minimal test call.
+ * Returns null on success, or an error message string on failure.
+ */
+export async function validateApiKey(provider: 'anthropic' | 'openai', apiKey: string): Promise<string | null> {
+  // Strip non-ASCII characters (smart quotes, ellipses, etc.) that can sneak in from rich-text paste
+  const cleanKey = apiKey.replace(/[^\x20-\x7E]/g, '').trim();
+  if (cleanKey !== apiKey.trim()) {
+    return 'API key contains invalid characters — try pasting it from a plain text source.';
+  }
+  try {
+    if (provider === 'anthropic') {
+      const client = new Anthropic({ apiKey });
+      await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+    } else {
+      const client = new OpenAI({ apiKey });
+      await client.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+    }
+    // If we get here, the key works — clear any stored error for this provider
+    if (lastApiKeyError?.provider === provider) {
+      lastApiKeyError = null;
+    }
+    return null;
+  } catch (err) {
+    const status = (err as any).status ?? (err as any).statusCode;
+    const msg = (err as any).message ?? 'Unknown error';
+    if (status === 401 || status === 403 || isAuthError(err)) {
+      return 'Invalid API key';
+    }
+    // Non-auth errors (rate limit, network) — key might be fine
+    if (status === 429) return null;
+    return `Could not validate key: ${msg}`;
   }
 }
 

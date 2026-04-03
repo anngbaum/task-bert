@@ -26,10 +26,10 @@ struct ContentView: View {
     @State private var showSettings: Bool = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
     @AppStorage("hasCompletedTaskTriage") private var hasCompletedTaskTriage: Bool = false
-    @State private var onboardingPhase: OnboardingPhase = .welcome
+    @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
+    @State private var onboardingPhase: OnboardingPhase = .apiKeyPrompt
 
     enum OnboardingPhase {
-        case welcome            // Explain what Bert does and how data stays local
         case apiKeyPrompt       // No key yet — show entry screen with Skip
         case updatingMetadata   // Key just entered — generating summaries
         case taskReview         // Metadata done — review tasks
@@ -39,14 +39,6 @@ struct ContentView: View {
         VStack(spacing: 0) {
             if !hasCompletedOnboarding {
                 switch onboardingPhase {
-                case .welcome:
-                    OnboardingWelcomeView {
-                        if viewModel.hasApiKey {
-                            onboardingPhase = .updatingMetadata
-                        } else {
-                            onboardingPhase = .apiKeyPrompt
-                        }
-                    }
                 case .apiKeyPrompt:
                     OnboardingApiKeyView(viewModel: viewModel) { didEnterKey in
                         print("[onboarding] apiKeyPrompt completed: didEnterKey=\(didEnterKey), hasApiKey=\(viewModel.hasApiKey)")
@@ -102,6 +94,25 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
                             .background(AppColors.syncBanner)
+                        }
+
+                        if let apiKeyError = viewModel.apiKeyError {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(AppColors.error)
+                                    .font(.caption)
+                                Text(apiKeyError)
+                                    .font(.caption)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Button("Settings") { showSettings = true }
+                                    .font(.caption)
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(AppColors.error.opacity(0.1))
                         }
 
                         // Content for selected tab
@@ -164,7 +175,7 @@ struct ContentView: View {
             // If user already has a key (entered during server init), always run
             // metadata generation to ensure summaries + actions are both complete
             // before showing TaskReview.
-            if !hasCompletedOnboarding && viewModel.hasApiKey && onboardingPhase != .welcome {
+            if !hasCompletedOnboarding && viewModel.hasApiKey {
                 onboardingPhase = .updatingMetadata
             }
         }
@@ -179,7 +190,8 @@ struct ContentView: View {
                 showSettings = false
                 hasCompletedTaskTriage = false
                 hasCompletedOnboarding = false
-                onboardingPhase = .welcome
+                hasSeenWelcome = false
+                onboardingPhase = .apiKeyPrompt
                 viewModel.didStartHardReset = false
             }
         }
@@ -483,6 +495,24 @@ struct OnboardingApiKeyView: View {
             isSaving = false
             onComplete(false)
             return
+        }
+
+        // Validate keys before saving
+        if !anthropicKeyInput.isEmpty {
+            let error = await viewModel.validateKey(provider: "anthropic", apiKey: anthropicKeyInput)
+            if let error {
+                errorMessage = "Anthropic: \(error)"
+                isSaving = false
+                return
+            }
+        }
+        if !openaiKeyInput.isEmpty {
+            let error = await viewModel.validateKey(provider: "openai", apiKey: openaiKeyInput)
+            if let error {
+                errorMessage = "OpenAI: \(error)"
+                isSaving = false
+                return
+            }
         }
 
         do {

@@ -120,6 +120,11 @@ actor APIClient {
         let processed: Int
     }
 
+    struct ApiKeyErrorInfo: Decodable {
+        let provider: String
+        let message: String
+    }
+
     struct HealthResponse: Decodable {
         let status: String
         let ready: Bool
@@ -127,6 +132,7 @@ actor APIClient {
         let progress: HealthProgress?
         let needsApiKeys: Bool?
         let embedding: EmbeddingProgress?
+        let apiKeyError: ApiKeyErrorInfo?
     }
 
     struct ContactsResponse: Decodable {
@@ -604,6 +610,7 @@ actor APIClient {
         let actionsModel: String?
         let summaryModel: String?
         let askModel: String?
+        let apiKeyError: ApiKeyErrorInfo?
     }
 
     struct ModelOption: Decodable, Identifiable {
@@ -648,6 +655,26 @@ actor APIClient {
             let http = response as? HTTPURLResponse
             throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
         }
+    }
+
+    struct ValidateKeyResponse: Decodable {
+        let valid: Bool
+        let error: String?
+    }
+
+    func validateKey(provider: String, apiKey: String) async throws -> ValidateKeyResponse {
+        let url = baseURL.appendingPathComponent("api/validate-key")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["provider": provider, "apiKey": apiKey])
+        let (data, response) = try await authData(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let http = response as? HTTPURLResponse
+            throw SearchError.serverError(statusCode: http?.statusCode ?? 0)
+        }
+        return try decoder.decode(ValidateKeyResponse.self, from: data)
     }
 
     // MARK: - Debug Logs

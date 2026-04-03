@@ -16,4 +16,8 @@ security delete-generic-password -s "com.bert.api-keys" -a "openai" 2>/dev/null 
 echo "Removing Application Support folder..."
 rm -rf ~/Library/Application\ Support/Bert && echo "  Application Support removed." || echo "  No Application Support folder found."
 
+# 4. Clean Xcode build cache
+echo "Cleaning Xcode derived data..."
+rm -rf ~/Library/Developer/Xcode/DerivedData/Bert-* && echo "  Derived data removed." || echo "  No derived data found."
+
 echo "Done! Bert is ready for a fresh setup."

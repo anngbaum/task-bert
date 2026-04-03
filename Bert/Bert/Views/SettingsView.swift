@@ -19,6 +19,9 @@ struct SettingsView: View {
     @State private var showDebugLogs: Bool = false
     @State private var showHardResetConfirm: Bool = false
     @State private var showSoftResetConfirm: Bool = false
+    @State private var anthropicKeyError: String? = nil
+    @State private var openaiKeyError: String? = nil
+    @State private var isValidating: Bool = false
 
     private var availableModels: [APIClient.ModelOption] {
         models.filter { $0.available }
@@ -69,6 +72,7 @@ struct SettingsView: View {
                             input: $anthropicKeyInput,
                             maskedKey: maskedAnthropicKey,
                             helpText: "console.anthropic.com",
+                            keyError: anthropicKeyError,
                             onRemove: {
                                 Task { await removeKey(provider: "anthropic") }
                             }
@@ -80,6 +84,7 @@ struct SettingsView: View {
                             input: $openaiKeyInput,
                             maskedKey: maskedOpenaiKey,
                             helpText: "platform.openai.com",
+                            keyError: openaiKeyError,
                             onRemove: {
                                 Task { await removeKey(provider: "openai") }
                             }
@@ -157,7 +162,7 @@ struct SettingsView: View {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
-                Button("Save") {
+                Button(isValidating ? "Validating..." : "Save") {
                     Task { await save() }
                 }
                 .disabled(isSaving)
@@ -200,6 +205,7 @@ struct SettingsView: View {
         input: Binding<String>,
         maskedKey: String?,
         helpText: String,
+        keyError: String?,
         onRemove: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -209,6 +215,12 @@ struct SettingsView: View {
 
             SecureField(placeholder, text: input)
                 .textFieldStyle(.roundedBorder)
+
+            if let error = keyError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.error)
+            }
 
             HStack {
                 if let masked = maskedKey, input.wrappedValue.isEmpty {
@@ -345,7 +357,31 @@ struct SettingsView: View {
 
     private func save() async {
         isSaving = true
+        isValidating = true
         statusMessage = nil
+        anthropicKeyError = nil
+        openaiKeyError = nil
+
+        // Validate new keys before saving
+        if !anthropicKeyInput.isEmpty {
+            let error = await viewModel.validateKey(provider: "anthropic", apiKey: anthropicKeyInput)
+            if let error {
+                anthropicKeyError = error
+                isValidating = false
+                isSaving = false
+                return
+            }
+        }
+        if !openaiKeyInput.isEmpty {
+            let error = await viewModel.validateKey(provider: "openai", apiKey: openaiKeyInput)
+            if let error {
+                openaiKeyError = error
+                isValidating = false
+                isSaving = false
+                return
+            }
+        }
+        isValidating = false
 
         // Save API keys to Keychain
         if !anthropicKeyInput.isEmpty {
@@ -404,6 +440,7 @@ struct SettingsView: View {
             }
 
             viewModel.hasApiKey = (maskedAnthropicKey != nil || maskedOpenaiKey != nil)
+            viewModel.apiKeyError = nil
             statusMessage = "Saved"
         } catch {
             statusMessage = "Error saving settings"

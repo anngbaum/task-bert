@@ -3,31 +3,41 @@ import SwiftUI
 @main
 struct BertApp: App {
     @StateObject private var serverManager = ServerManager()
+    @AppStorage("hasSeenWelcome") private var hasSeenWelcome: Bool = false
 
     var body: some Scene {
         WindowGroup {
             Group {
-                switch serverManager.state {
-                case .running:
-                    ContentView()
-                case .initializing:
-                    ServerInitializingView(progress: serverManager.syncProgress)
-                case .starting, .stopped:
-                    ServerStartingView()
-                case .needsFullDiskAccess:
-                    FullDiskAccessView {
-                        serverManager.openFullDiskAccessSettings()
-                    } onRetry: {
+                if !hasSeenWelcome {
+                    OnboardingWelcomeView {
+                        hasSeenWelcome = true
                         serverManager.start()
                     }
-                case .failed(let message):
-                    ServerErrorView(message: message) {
-                        serverManager.start()
+                } else {
+                    switch serverManager.state {
+                    case .running:
+                        ContentView()
+                    case .initializing:
+                        ServerInitializingView(progress: serverManager.syncProgress)
+                    case .starting, .stopped:
+                        ServerStartingView()
+                    case .needsFullDiskAccess:
+                        FullDiskAccessView {
+                            serverManager.openFullDiskAccessSettings()
+                        } onRetry: {
+                            serverManager.start()
+                        }
+                    case .failed(let message):
+                        ServerErrorView(message: message) {
+                            serverManager.start()
+                        }
                     }
                 }
             }
             .onAppear {
-                serverManager.start()
+                if hasSeenWelcome {
+                    serverManager.start()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 serverManager.stop()
@@ -53,12 +63,6 @@ struct ServerStartingView: View {
 struct ServerInitializingView: View {
     let progress: ServerManager.SyncProgress
 
-    @State private var anthropicKeyInput: String = ""
-    @State private var openaiKeyInput: String = ""
-    @State private var keySaved: Bool = false
-    @State private var keySaving: Bool = false
-    @State private var keyError: String? = nil
-
     private var stageLabel: String {
         switch progress.stage {
         case "setup": return "Preparing"
@@ -68,11 +72,6 @@ struct ServerInitializingView: View {
         case "done": return "Finishing Up"
         default: return "Setting Up"
         }
-    }
-
-    /// Whether the sync is still in an early stage where the key can be added in time for metadata
-    private var showKeyInput: Bool {
-        !keySaved && (progress.stage == "" || progress.stage == "setup" || progress.stage == "etl" || progress.stage == "embedding")
     }
 
     var body: some View {
@@ -120,118 +119,12 @@ struct ServerInitializingView: View {
                 }
             }
 
-            // API key input — shown while import is still running
-            if showKeyInput {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Add an API key while you wait (optional)")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-
-                    Text("Enables conversation summaries and action items. You can also add this later in Settings.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Anthropic API Key")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        SecureField("sk-ant-...", text: $anthropicKeyInput)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("OpenAI API Key")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        SecureField("sk-...", text: $openaiKeyInput)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    if let error = keyError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(AppColors.error)
-                    }
-
-                    Button {
-                        Task { await saveKey() }
-                    } label: {
-                        if keySaving {
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                Text("Saving...")
-                            }
-                        } else {
-                            Text("Save Key")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(keySaving || (anthropicKeyInput.isEmpty && openaiKeyInput.isEmpty))
-                }
-                .frame(width: 340)
-                .padding(.top, 4)
-            } else if keySaved {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.success)
-                    Text("API key saved — summaries will be generated automatically.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.3), value: progress.percent)
     }
 
-    private func readAuthToken() -> String? {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let tokenPath = appSupport.appendingPathComponent("Bert/auth-token").path
-        return try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func saveKey() async {
-        keySaving = true
-        keyError = nil
-
-        // Save to Keychain
-        if !anthropicKeyInput.isEmpty {
-            KeychainManager.anthropicApiKey = anthropicKeyInput
-        }
-        if !openaiKeyInput.isEmpty {
-            KeychainManager.openaiApiKey = openaiKeyInput
-        }
-
-        // Push to server in-memory
-        var updates: [String: String] = [:]
-        if !anthropicKeyInput.isEmpty { updates["anthropicApiKey"] = anthropicKeyInput }
-        if !openaiKeyInput.isEmpty { updates["openaiApiKey"] = openaiKeyInput }
-
-        do {
-            let url = URL(string: "http://localhost:11488/api/settings")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "PUT"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            if let token = readAuthToken() {
-                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            }
-            request.httpBody = try JSONSerialization.data(withJSONObject: updates)
-            let (_, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                keyError = "Server returned an error — try again in a moment."
-                return
-            }
-            keySaved = true
-        } catch {
-            keyError = "Couldn't reach server yet — try again in a moment."
-        }
-        keySaving = false
-    }
 }
 
 struct FullDiskAccessView: View {

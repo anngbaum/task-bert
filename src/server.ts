@@ -10,7 +10,7 @@ import { searchFTS } from './search/fts.js';
 import { searchVector } from './search/vector.js';
 import { searchHybrid } from './search/hybrid.js';
 import { getContextMessages } from './display/formatter.js';
-import { disposeQueryParser, AVAILABLE_MODELS } from './llm/query-parser.js';
+import { disposeQueryParser, AVAILABLE_MODELS, validateApiKey, getApiKeyError, clearApiKeyError } from './llm/query-parser.js';
 import { searchContacts, resolveContactHandleIds } from './contacts/search.js';
 import { unifiedSync, syncSingleConversation, importOlderMessages } from './commands/unified-sync.js';
 import { updateMetadata, refreshChatMetadata } from './commands/update-metadata.js';
@@ -447,10 +447,12 @@ async function handleGetSettings(res: http.ServerResponse): Promise<void> {
   // Return settings — never send API keys over the wire (even masked).
   // The Swift client owns the keys via Keychain and pushes them on startup.
   const { anthropicApiKey, openaiApiKey, ...safeSettings } = settings;
+  const apiKeyErr = getApiKeyError();
   jsonResponse(res, {
     ...safeSettings,
     hasAnthropicKey: !!anthropicApiKey,
     hasOpenaiKey: !!openaiApiKey,
+    apiKeyError: apiKeyErr ? { provider: apiKeyErr.provider, message: apiKeyErr.message } : undefined,
   });
 }
 
@@ -469,9 +471,14 @@ async function handlePutSettings(
 
   if (update.anthropicApiKey !== undefined) {
     settings.anthropicApiKey = update.anthropicApiKey || undefined;
+    // Clear any auth error for this provider since the key changed
+    const err = getApiKeyError();
+    if (err?.provider === 'anthropic') clearApiKeyError();
   }
   if (update.openaiApiKey !== undefined) {
     settings.openaiApiKey = update.openaiApiKey || undefined;
+    const err = getApiKeyError();
+    if (err?.provider === 'openai') clearApiKeyError();
   }
   // Legacy single model
   if (update.selectedModel !== undefined) {
@@ -910,6 +917,24 @@ const server = http.createServer(async (req, res) => {
           }
           break;
         }
+        case '/api/validate-key': {
+          const body = await readBody(req);
+          let payload: { provider?: string; apiKey?: string };
+          try {
+            payload = JSON.parse(body);
+          } catch {
+            errorResponse(res, 'Invalid JSON body');
+            break;
+          }
+          const { provider, apiKey } = payload;
+          if (!provider || !apiKey || (provider !== 'anthropic' && provider !== 'openai')) {
+            errorResponse(res, 'Missing or invalid provider/apiKey');
+            break;
+          }
+          const validationError = await validateApiKey(provider, apiKey);
+          jsonResponse(res, { valid: !validationError, error: validationError });
+          break;
+        }
         default:
           errorResponse(res, 'Not found', 404);
       }
@@ -921,6 +946,7 @@ const server = http.createServer(async (req, res) => {
       case '/health':
         clientHasConnected = true;
         const embProgress = getEmbeddingProgress();
+        const apiKeyErr = getApiKeyError();
         jsonResponse(res, {
           status: 'ok',
           ready: initialSyncDone,
@@ -928,6 +954,7 @@ const server = http.createServer(async (req, res) => {
           progress: syncInProgress ? getSyncProgress() : undefined,
           needsApiKeys: !settings.anthropicApiKey && !settings.openaiApiKey,
           embedding: embProgress.isRunning ? embProgress : undefined,
+          apiKeyError: apiKeyErr ? { provider: apiKeyErr.provider, message: apiKeyErr.message } : undefined,
         });
         break;
       case '/api/data-range': {
@@ -1207,6 +1234,7 @@ async function start(): Promise<void> {
     console.log('  GET /api/thread?messageId=...&before=25&after=25');
     console.log('  GET /api/settings');
     console.log('  PUT /api/settings');
+    console.log('  POST /api/validate-key');
     console.log('  POST /api/sync');
   });
 
