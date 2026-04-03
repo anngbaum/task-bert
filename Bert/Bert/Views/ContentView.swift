@@ -26,9 +26,10 @@ struct ContentView: View {
     @State private var showSettings: Bool = false
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
     @AppStorage("hasCompletedTaskTriage") private var hasCompletedTaskTriage: Bool = false
-    @State private var onboardingPhase: OnboardingPhase = .apiKeyPrompt
+    @State private var onboardingPhase: OnboardingPhase = .welcome
 
     enum OnboardingPhase {
+        case welcome            // Explain what Bert does and how data stays local
         case apiKeyPrompt       // No key yet — show entry screen with Skip
         case updatingMetadata   // Key just entered — generating summaries
         case taskReview         // Metadata done — review tasks
@@ -38,6 +39,14 @@ struct ContentView: View {
         VStack(spacing: 0) {
             if !hasCompletedOnboarding {
                 switch onboardingPhase {
+                case .welcome:
+                    OnboardingWelcomeView {
+                        if viewModel.hasApiKey {
+                            onboardingPhase = .updatingMetadata
+                        } else {
+                            onboardingPhase = .apiKeyPrompt
+                        }
+                    }
                 case .apiKeyPrompt:
                     OnboardingApiKeyView(viewModel: viewModel) { didEnterKey in
                         print("[onboarding] apiKeyPrompt completed: didEnterKey=\(didEnterKey), hasApiKey=\(viewModel.hasApiKey)")
@@ -155,7 +164,7 @@ struct ContentView: View {
             // If user already has a key (entered during server init), always run
             // metadata generation to ensure summaries + actions are both complete
             // before showing TaskReview.
-            if !hasCompletedOnboarding && viewModel.hasApiKey {
+            if !hasCompletedOnboarding && viewModel.hasApiKey && onboardingPhase != .welcome {
                 onboardingPhase = .updatingMetadata
             }
         }
@@ -170,7 +179,7 @@ struct ContentView: View {
                 showSettings = false
                 hasCompletedTaskTriage = false
                 hasCompletedOnboarding = false
-                onboardingPhase = viewModel.hasApiKey ? .updatingMetadata : .apiKeyPrompt
+                onboardingPhase = .welcome
                 viewModel.didStartHardReset = false
             }
         }
@@ -316,6 +325,60 @@ struct ContentView: View {
 }
 
 // MARK: - Onboarding: API Key Prompt
+
+struct OnboardingWelcomeView: View {
+    let onContinue: () -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image("Broom")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 100, height: 100)
+
+            Text("Welcome! Let's tell you a little bit about Bert.")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            VStack(alignment: .leading, spacing: 14) {
+                Label {
+                    Text("Bert makes a searchable copy of your messages, but it **stays on your computer**. We don't save anything to any server — if you delete the app, we're gone forever.")
+                } icon: {
+                    Image(systemName: "lock.shield")
+                        .foregroundStyle(.secondary)
+                }
+
+                Label {
+                    Text("You can optionally add an LLM API key. Messages are sent straight to the LLM to summarize conversations, find to-dos, and spot calendar events — then organized for you inside Bert.")
+                } icon: {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(.secondary)
+                }
+
+                Label {
+                    Text("We never save anything off of your computer, and we're open source so you can check out the code yourself.")
+                } icon: {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.callout)
+            .frame(width: 380)
+
+            Button("Get Started") {
+                onContinue()
+            }
+            .buttonStyle(.borderedProminent)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
 
 /// Shown after the initial import completes when the user has no API key.
 /// Offers to enter a key or skip.
