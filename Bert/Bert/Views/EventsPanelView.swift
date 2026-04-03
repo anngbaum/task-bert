@@ -9,8 +9,15 @@ struct EventsPanelView: View {
     private var futureEvents: [KeyEvent] {
         let startOfToday = Calendar.current.startOfDay(for: Date())
         return viewModel.keyEvents
-            .filter { ($0.date ?? .distantFuture) >= startOfToday }
-            .sorted { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
+            .filter { event in
+                guard let date = event.date else { return false }
+                return date >= startOfToday
+            }
+            .sorted { $0.date! < $1.date! }
+    }
+
+    private var undatedEvents: [KeyEvent] {
+        viewModel.keyEvents.filter { $0.date == nil }
     }
 
     private var pastEvents: [KeyEvent] {
@@ -94,6 +101,21 @@ struct EventsPanelView: View {
                                     .padding(.leading, 2)
 
                                 ForEach(group.events) { event in
+                                    EventRowView(event: event, viewModel: viewModel)
+                                }
+                            }
+                        }
+
+                        // Upcoming (no specific date)
+                        if !undatedEvents.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Upcoming")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.leading, 2)
+
+                                ForEach(undatedEvents) { event in
                                     EventRowView(event: event, viewModel: viewModel)
                                 }
                             }

@@ -480,6 +480,8 @@ Your response is the COMPLETE list. Items you omit will be removed.
 
 Focus on discrete events with dates and/or locations that would be useful to remember. Ignore vague plans with no date or location.
 
+IMPORTANT: Merge related messages into a single event. If someone describes one plan across multiple messages (e.g. "let's hang out tomorrow" followed by "and grab drinks"), that is ONE event, not two. Use the message_id of the most specific/informative message.
+
 Include important milestones that might be considerate to follow up on in the future (e.g. the date when a friend starts a new job, a specific pregnancy due date, birthday, etc.)
 
 Respond with ONLY valid JSON:
