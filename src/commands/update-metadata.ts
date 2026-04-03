@@ -241,7 +241,7 @@ export async function updateMetadata(config: LLMConfig, options: MetadataOptions
 
     for (let batchStart = 0; batchStart < chats.length; batchStart += SUMMARY_CONCURRENCY) {
       const batch = chats.slice(batchStart, batchStart + SUMMARY_CONCURRENCY);
-      updateSyncProgress('metadata', `Summarizing chats ${batchStart + 1}–${Math.min(batchStart + SUMMARY_CONCURRENCY, chats.length)} of ${chats.length}...`, 85 + Math.round((batchStart / chats.length) * 5));
+      updateSyncProgress('metadata', `Summarizing chats ${batchStart + 1} of ${chats.length}...`, 85 + Math.round((batchStart / chats.length) * 5));
 
       const results = await Promise.allSettled(batch.map(async (chat, j) => {
         const i = batchStart + j;
@@ -470,10 +470,10 @@ async function extractEvents(
 
   const msgLines = chat.messages.map((m) => `[MSG-${m.id}] [${m.date}] ${m.sender}: ${m.text}`).join('\n');
 
-  const systemPrompt = `Extract future events from this iMessage conversation. Today is ${ctx.today}.
+  const systemPrompt = `Extract future events from this iMessage conversation..
 
-Return specific, actionable events/plans/milestones with dates TODAY or later. Skip past events.
-Be precise — include venue, time, and confirmed details. If timing is confirmed, include the time.
+Return specific, actionable events/plans/milestones.
+Be precise — include venue, time, and confirmed details. If timing is confirmed, include the time by referring to the message timestamp.
 Each message is tagged [MSG-###]. Use message_id to identify the source.
 
 Your response is the COMPLETE list. Items you omit will be removed.
@@ -639,7 +639,7 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
   // Process chats in parallel batches
   for (let batchStart = 0; batchStart < allChats.length; batchStart += CONCURRENCY) {
     const batch = allChats.slice(batchStart, batchStart + CONCURRENCY);
-    updateSyncProgress('metadata', `Extracting events/tasks ${batchStart + 1}–${Math.min(batchStart + CONCURRENCY, allChats.length)} of ${allChats.length}...`, 90 + Math.round((batchStart / allChats.length) * 9));
+    updateSyncProgress('metadata', `Extracting events and tasks ${batchStart + 1} of ${allChats.length}...`, 90 + Math.round((batchStart / allChats.length) * 9));
 
     // Pre-fetch reminder mappings for this batch (DB reads before parallel LLM calls)
     const batchContext = await Promise.all(batch.map(async (chat, j) => {

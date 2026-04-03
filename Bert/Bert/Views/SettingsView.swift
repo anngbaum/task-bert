@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var maskedOpenaiKey: String? = nil
     @State private var isSaving: Bool = false
     @State private var isLoading: Bool = true
+    @State private var loadFailed: Bool = false
     @State private var statusMessage: String? = nil
     @State private var showDebugLogs: Bool = false
     @State private var showHardResetConfirm: Bool = false
@@ -31,6 +32,34 @@ struct SettingsView: View {
             if isLoading {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if loadFailed {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("Unable to load settings")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("The server may not be running. Check the logs for details.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                    Button {
+                        showDebugLogs = true
+                    } label: {
+                        Label("View Server Logs", systemImage: "terminal")
+                    }
+                    .buttonStyle(.bordered)
+                    Button("Retry") {
+                        Task { await loadSettings() }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -136,7 +165,7 @@ struct SettingsView: View {
             }
         }
         .padding(20)
-        .frame(width: 480, height: 640)
+        .frame(width: 480, height: 550)
         .task { await loadSettings() }
         .sheet(isPresented: $showDebugLogs) {
             DebugLogsView(viewModel: viewModel)
@@ -256,6 +285,7 @@ struct SettingsView: View {
 
     private func loadSettings() async {
         isLoading = true
+        loadFailed = false
         do {
             async let settingsReq = viewModel.fetchSettings()
             async let modelsReq = viewModel.fetchModels()
@@ -276,7 +306,7 @@ struct SettingsView: View {
             summaryModel = settings.summaryModel ?? defaultHaiku ?? defaultModel
             askModel = settings.askModel ?? settings.selectedModel ?? defaultHaiku ?? defaultModel
         } catch {
-            statusMessage = "Error loading settings"
+            loadFailed = true
         }
         isLoading = false
     }
