@@ -585,12 +585,12 @@
     <div class="step">
       <div class="step-number">1</div>
       <h4>Install</h4>
-      <p>Download Bert and move it to Applications. Grant Full Disk Access so it can read your messages.</p>
+      <p>Download Bert and move grant Full Disk Access. Bert indexes your messages locally with full-text and vector search.</p>
     </div>
     <div class="step">
       <div class="step-number">2</div>
       <h4>Sync</h4>
-      <p>Add your API key and hit Sync. Bert indexes your messages locally with full-text and vector search.</p>
+      <p>Add your API key and hit Sync. Bert sends the conversations directly to your LLM provider to summarize and find to-dos and calendar events.</p>
     </div>
     <div class="step">
       <div class="step-number">3</div>
@@ -609,8 +609,13 @@
   </div>
 
   <div class="faq-item">
+    <h3>Does Bert send my messages to a server?</h3>
+    <p>No. Bert sends the conversations directly to your LLM provider to summarize and find to-dos and calendar events. Your messages are never stored on a server.</p>
+  </div>
+
+  <div class="faq-item">
     <h3>Can Bert leak my messages outside of the app?</h3>
-    <p>Bert only connects to two services: the Claude API (Anthropic) and the OpenAI API — and only when you use AI features like summaries and action items. These calls use your own API key and are limited to summarizing and finding messages. Bert cannot access any other websites, services, or third-party tools. Your messages stay between your Mac and the AI provider you choose.</p>
+    <p>Bert only connects to two services: the Claude API (Anthropic) or the OpenAI API — and only when you use AI features like summaries and action items. These calls use your own API key and are limited to summarizing and finding messages. Bert cannot access any other websites, services, or third-party tools. Your messages stay between your Mac and the AI provider you choose.</p>
   </div>
 
   <div class="faq-item">
@@ -827,6 +832,26 @@
     content.style.opacity = '1';
     cycle();
   }
+
+  // Pre-compute the tallest example so the demo area stays constant height
+  var maxContentHeight = 0;
+  for (var e = 0; e < examples.length; e++) {
+    content.innerHTML = buildHTML(examples[e]);
+    // Make everything visible so we can measure full height
+    var allEls = content.querySelectorAll('.demo-tools, .demo-answer, .demo-refs, [data-step], .demo-thinking');
+    for (var j = 0; j < allEls.length; j++) {
+      allEls[j].style.opacity = '1';
+      allEls[j].style.transform = 'none';
+      allEls[j].style.position === 'absolute' && (allEls[j].style.position = 'static');
+    }
+    // The tools section is absolutely positioned — temporarily make it static to measure
+    var toolsEl = content.querySelector('.demo-tools');
+    if (toolsEl) toolsEl.style.position = 'static';
+    var h = content.offsetHeight;
+    if (h > maxContentHeight) maxContentHeight = h;
+  }
+  content.innerHTML = '';
+  content.style.minHeight = maxContentHeight + 'px';
 
   // Start when demo scrolls into view
   var observer = new IntersectionObserver(function(entries) {
