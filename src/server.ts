@@ -58,7 +58,7 @@ let initialSyncDone = false;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 
 // --- Sync progress tracking (shared module) ---
-import { getSyncProgress, updateSyncProgress } from './progress.js';
+import { getSyncProgress, updateSyncProgress, getEmbeddingProgress } from './progress.js';
 
 const MODEL_DEFAULTS: Record<string, string> = {
   actions: 'claude-sonnet-4-6',
@@ -502,9 +502,8 @@ const server = http.createServer(async (req, res) => {
   const params = url.searchParams;
 
   // Allow /health and /api/settings without auth
-  // /health: needed for startup polling before token is read
-  // /api/settings PUT: needed during init screen before app has read the auth token
-  const authExempt = url.pathname === '/health' || (url.pathname === '/api/settings' && req.method === 'PUT');
+  // /health: auth-exempt for startup polling before token is read
+  const authExempt = url.pathname === '/health';
   if (!authExempt && !checkAuth(req)) {
     errorResponse(res, 'Unauthorized', 401);
     return;
@@ -921,12 +920,14 @@ const server = http.createServer(async (req, res) => {
     switch (url.pathname) {
       case '/health':
         clientHasConnected = true;
+        const embProgress = getEmbeddingProgress();
         jsonResponse(res, {
           status: 'ok',
           ready: initialSyncDone,
           syncing: syncInProgress,
           progress: syncInProgress ? getSyncProgress() : undefined,
           needsApiKeys: !settings.anthropicApiKey && !settings.openaiApiKey,
+          embedding: embProgress.isRunning ? embProgress : undefined,
         });
         break;
       case '/api/data-range': {

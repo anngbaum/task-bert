@@ -31,10 +31,18 @@ import { embed } from './embed.js';
 import { updateMetadata, refreshChatMetadata } from './update-metadata.js';
 import type { LLMConfig } from '../llm/query-parser.js';
 import { DATA_DIR } from '../config.js';
-import { updateSyncProgress } from '../progress.js';
+import { updateSyncProgress, updateEmbeddingProgress } from '../progress.js';
 
 const PG_DATA_DIR = path.join(DATA_DIR, 'pgdata');
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
+
+/** Fire-and-forget background embedding. Logs errors but never rejects. */
+function runBackgroundEmbedding(batchSize: number): void {
+  embed({ batchSize }).catch((err) => {
+    console.error('[background-embed] Embedding failed:', err);
+    updateEmbeddingProgress({ isRunning: false });
+  });
+}
 
 export interface UnifiedSyncOptions {
   /**
@@ -221,11 +229,10 @@ export async function unifiedSync(options: UnifiedSyncOptions): Promise<UnifiedS
   const now = new Date();
   await setLastSynced(pg, now);
 
-  // Embed new messages (embed() already only processes messages with no embedding)
+  // Kick off embedding in background — don't block sync on it
   if (!skipEmbed) {
-    console.log('Embedding new messages...');
-    updateSyncProgress('embedding', 'Generating embeddings...', 50);
-    await embed({ batchSize: embedBatchSize });
+    console.log('Embedding new messages in background...');
+    runBackgroundEmbedding(embedBatchSize);
   }
 
   // Metadata (only if an API key is configured)
@@ -347,16 +354,15 @@ async function hardReset(options: UnifiedSyncOptions): Promise<UnifiedSyncResult
   const msgCount = await pg.query('SELECT count(*) as cnt FROM message');
   console.log(`[hard-reset] Fresh DB message count: ${(msgCount.rows[0] as any).cnt}`);
 
-  // Ingest last 120 days of messages
+  // Ingest last 3 days of messages (TODO: restore to 120 days after testing)
   const cutoffDate = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
   updateSyncProgress('etl', 'Importing messages...', 5);
   const etlResult = await runETL(cutoffDate, 5);
 
-  // Embed all
+  // Kick off embedding in background — don't block onboarding on it
   if (!skipEmbed) {
-    console.log('\nEmbedding messages...');
-    updateSyncProgress('embedding', 'Generating embeddings...', 25);
-    await embed({ batchSize: embedBatchSize });
+    console.log('\nEmbedding messages in background...');
+    runBackgroundEmbedding(embedBatchSize);
   }
 
   // Update metadata for recent conversations (only if an API key is configured)
@@ -497,10 +503,9 @@ export async function importOlderMessages(since: Date): Promise<{ messagesAdded:
   updateSyncProgress('etl', 'Importing older messages...', 5);
   const etlResult = await runETL(since, 5);
 
-  // Embed new messages only
-  console.log('Embedding new messages...');
-  updateSyncProgress('embedding', 'Generating embeddings...', 50);
-  await embed({ batchSize: 200 });
+  // Kick off embedding in background
+  console.log('Embedding new messages in background...');
+  runBackgroundEmbedding(200);
 
   updateSyncProgress('done', 'Complete!', 100);
   console.log(`Import complete: ${etlResult.newMessageCount} new message(s).`);

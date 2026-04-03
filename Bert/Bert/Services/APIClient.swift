@@ -114,12 +114,19 @@ actor APIClient {
         let percent: Double
     }
 
+    struct EmbeddingProgress: Decodable {
+        let isRunning: Bool
+        let total: Int
+        let processed: Int
+    }
+
     struct HealthResponse: Decodable {
         let status: String
         let ready: Bool
         let syncing: Bool
         let progress: HealthProgress?
         let needsApiKeys: Bool?
+        let embedding: EmbeddingProgress?
     }
 
     struct ContactsResponse: Decodable {

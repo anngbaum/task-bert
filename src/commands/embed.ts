@@ -1,6 +1,6 @@
 import { getPglite } from '../db/pglite-client.js';
 import { getEmbeddingsBatch, disposeEmbedder } from '../embeddings/local.js';
-import { updateSyncProgress } from '../progress.js';
+import { updateEmbeddingProgress } from '../progress.js';
 
 /**
  * Returns true if a message has enough meaningful text content to produce
@@ -40,11 +40,13 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
 
   if (total === 0) {
     console.log('All messages already have embeddings!');
+    updateEmbeddingProgress({ isRunning: false, total: 0, processed: 0 });
     return;
   }
 
   console.log(`Generating embeddings for ${total} messages (batch size: ${batchSize})...`);
   console.log('Note: on first run the model (~135 MB) will be downloaded and cached.');
+  updateEmbeddingProgress({ isRunning: true, total, processed: 0 });
 
   let processed = 0;
   let errors = 0;
@@ -92,9 +94,8 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
         // Update progress after each inference chunk
         const chunkProcessed = processed + skipIds.length + ci + chunkRows.length;
         const pct = ((chunkProcessed / total) * 100).toFixed(1);
-        const overallPct = 25 + Math.round((chunkProcessed / total) * 60);
-        updateSyncProgress('embedding', `Embedding messages: ${chunkProcessed.toLocaleString()}/${total.toLocaleString()} (${pct}%)`, overallPct);
-        process.stdout.write(`  Progress: ${chunkProcessed}/${total} (${pct}%)\r`);
+        updateEmbeddingProgress({ processed: chunkProcessed });
+        console.log(`[embedding] ${chunkProcessed}/${total} (${pct}%)`);
 
         // Yield to the event loop so the HTTP server can respond to health checks
         await new Promise((r) => setTimeout(r, 0));
@@ -129,6 +130,7 @@ export async function embed(options: EmbedOptions = {}): Promise<void> {
   }
 
   await disposeEmbedder();
+  updateEmbeddingProgress({ isRunning: false, processed, total });
 
   console.log(`\nEmbedding complete! Processed ${processed} messages.`);
   if (errors > 0) {

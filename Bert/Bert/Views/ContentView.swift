@@ -73,6 +73,7 @@ struct ContentView: View {
 
                             Spacer()
 
+                            embeddingIndicator
                             syncButton
                             settingsButton
                         }
@@ -151,9 +152,11 @@ struct ContentView: View {
             SettingsView(viewModel: viewModel)
         }
         .onAppear {
-            // If user already has a key (entered during server init), skip to task review
+            // If user already has a key (entered during server init), always run
+            // metadata generation to ensure summaries + actions are both complete
+            // before showing TaskReview.
             if !hasCompletedOnboarding && viewModel.hasApiKey {
-                onboardingPhase = .taskReview
+                onboardingPhase = .updatingMetadata
             }
         }
         .onChange(of: viewModel.hasApiKey) { _ in
@@ -167,7 +170,7 @@ struct ContentView: View {
                 showSettings = false
                 hasCompletedTaskTriage = false
                 hasCompletedOnboarding = false
-                onboardingPhase = viewModel.hasApiKey ? .taskReview : .apiKeyPrompt
+                onboardingPhase = viewModel.hasApiKey ? .updatingMetadata : .apiKeyPrompt
                 viewModel.didStartHardReset = false
             }
         }
@@ -277,6 +280,27 @@ struct ContentView: View {
         .disabled(viewModel.isSyncing)
         .help(viewModel.syncTooltip)
         .padding(.trailing, 8)
+    }
+
+    @ViewBuilder
+    private var embeddingIndicator: some View {
+        if viewModel.isEmbedding {
+            let pct = viewModel.embeddingTotal > 0
+                ? Int(Double(viewModel.embeddingProcessed) / Double(viewModel.embeddingTotal) * 100)
+                : 0
+            HStack(spacing: 5) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Indexing \(pct)%")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppColors.syncBanner)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .help("Indexing messages for search: \(viewModel.embeddingProcessed.formatted())/\(viewModel.embeddingTotal.formatted())")
+        }
     }
 
     private var settingsButton: some View {

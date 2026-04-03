@@ -472,15 +472,15 @@ async function extractEvents(
 
   const systemPrompt = `Extract future events from this iMessage conversation. Today is ${ctx.today}.
 
-Return events/plans/milestones with dates TODAY or later. Skip past events.
-Be specific — include venue, time, and confirmed details. If timing is confirmed, include the time.
+Return specific, actionable events/plans/milestones with dates TODAY or later. Skip past events.
+Be precise — include venue, time, and confirmed details. If timing is confirmed, include the time.
 Each message is tagged [MSG-###]. Use message_id to identify the source.
 
 Your response is the COMPLETE list. Items you omit will be removed.
 
-Focus on specific events with dates and/or locations that would be useful to remember. Ignore vague plans with no date or location.
+Focus on discrete events with dates and/or locations that would be useful to remember. Ignore vague plans with no date or location.
 
-Include important milestones that might be considerate to follow up on (e.g. starting a new job, a pregnancy due date, birthday, etc.)
+Include important milestones that might be considerate to follow up on in the future (e.g. the date when a friend starts a new job, a specific pregnancy due date, birthday, etc.)
 
 Respond with ONLY valid JSON:
 { "events": [{ "message_id": 456, "title": "Dinner at Nobu", "date": "2026-04-05T19:00:00${ctx.tzOffset}", "location": "Nobu Malibu" }] }

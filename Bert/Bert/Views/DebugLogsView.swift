@@ -37,6 +37,16 @@ struct DebugLogsView: View {
                     .controlSize(.small)
 
                 Button {
+                    let text = filteredLogs.map { "[\($0.level.uppercased())] \($0.ts) \($0.message)" }.joined(separator: "\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.plain)
+                .help("Copy All")
+
+                Button {
                     Task { await viewModel.loadDebugLogs() }
                 } label: {
                     if viewModel.isLoadingLogs {

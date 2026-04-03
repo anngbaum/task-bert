@@ -42,6 +42,11 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var lastSyncMessage: String? = nil
     @Published private(set) var lastSyncedAt: Date? = nil
 
+    // Background embedding progress
+    @Published private(set) var isEmbedding: Bool = false
+    @Published private(set) var embeddingTotal: Int = 0
+    @Published private(set) var embeddingProcessed: Int = 0
+
     var syncTooltip: String {
         if isSyncing { return "Syncing..." }
         if let date = lastSyncedAt {
@@ -109,6 +114,7 @@ final class SearchViewModel: ObservableObject {
 
     private let service = APIClient()
     private var healthPollTask: Task<Void, Never>?
+    private var embeddingPollTask: Task<Void, Never>?
 
     init() {
         // Apply default preset dates
@@ -165,6 +171,7 @@ final class SearchViewModel: ObservableObject {
         do {
             let health = try await service.fetchHealth()
             if health.needsApiKeys == true { await pushApiKeysToServer() }
+            updateEmbeddingState(health.embedding)
             if health.syncing {
                 isSyncing = true
                 lastSyncMessage = progressMessage(health.progress)
@@ -174,6 +181,7 @@ final class SearchViewModel: ObservableObject {
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     let h = try await service.fetchHealth()
                     if h.needsApiKeys == true { await pushApiKeysToServer() }
+                    updateEmbeddingState(h.embedding)
                     if !h.syncing && h.ready {
                         break
                     }
@@ -188,8 +196,42 @@ final class SearchViewModel: ObservableObject {
                 lastSyncMessage = nil
                 isSyncing = false
             }
+
+            // If embedding is still running in background, start dedicated poll
+            if isEmbedding {
+                startEmbeddingPoll()
+            }
         } catch {
             // Server not reachable yet — ignore
+        }
+    }
+
+    @MainActor
+    private func updateEmbeddingState(_ embedding: APIClient.EmbeddingProgress?) {
+        if let e = embedding, e.isRunning {
+            isEmbedding = true
+            embeddingTotal = e.total
+            embeddingProcessed = e.processed
+        } else {
+            isEmbedding = false
+        }
+    }
+
+    /// Poll /health for background embedding progress until it completes.
+    private func startEmbeddingPoll() {
+        embeddingPollTask?.cancel()
+        embeddingPollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                do {
+                    let health = try await self.service.fetchHealth()
+                    self.updateEmbeddingState(health.embedding)
+                    if !self.isEmbedding { return }
+                } catch {
+                    // Ignore transient errors
+                }
+            }
         }
     }
 
@@ -486,6 +528,10 @@ final class SearchViewModel: ObservableObject {
             await loadDataRange()
             await loadChatMetadata()
             await loadActions()
+            // Check if background embedding started
+            let health = try? await service.fetchHealth()
+            updateEmbeddingState(health?.embedding)
+            if isEmbedding { startEmbeddingPoll() }
         } catch is URLError {
             lastSyncMessage = "Sync failed: cannot connect to server"
         } catch {
@@ -519,6 +565,10 @@ final class SearchViewModel: ObservableObject {
                 lastSyncMessage = "Summaries complete"
                 await loadChatMetadata()
                 await loadActions()
+                // Check if background embedding started
+                let health = try? await service.fetchHealth()
+                updateEmbeddingState(health?.embedding)
+                if isEmbedding { startEmbeddingPoll() }
             } catch {
                 lastSyncMessage = "Failed: \(error.localizedDescription)"
             }
@@ -567,6 +617,10 @@ final class SearchViewModel: ObservableObject {
             await loadGroups()
             await loadChatMetadata()
             await loadActions()
+            // Check if background embedding started
+            let health = try? await service.fetchHealth()
+            updateEmbeddingState(health?.embedding)
+            if isEmbedding { startEmbeddingPoll() }
         } catch is CancellationError {
             lastSyncMessage = "Hard reset cancelled"
         } catch is URLError {
