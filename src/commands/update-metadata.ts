@@ -470,7 +470,7 @@ async function extractEvents(
 
   const msgLines = chat.messages.map((m) => `[MSG-${m.id}] [${m.date}] ${m.sender}: ${m.text}`).join('\n');
 
-  const systemPrompt = `Extract future events from this iMessage conversation..
+  const systemPrompt = `Extract events from this iMessage conversation.
 
 Return specific, actionable events/plans/milestones.
 Be precise — include venue, time, and confirmed details. If timing is confirmed, include the time by referring to the message timestamp.
