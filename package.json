@@ -15,7 +15,8 @@
     "resync": "tsx src/index.ts resync",
     "mcp": "tsx src/mcp-server.ts",
     "bundle": "bash scripts/bundle-server.sh",
-    "package": "bash scripts/package-app.sh"
+    "package": "bash scripts/package-app.sh",
+    "reset": "bash scripts/reset.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
