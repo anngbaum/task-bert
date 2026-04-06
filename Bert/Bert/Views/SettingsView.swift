@@ -313,10 +313,13 @@ struct SettingsView: View {
             models = fetchedModels
             let defaultSonnet = fetchedModels.first(where: { $0.available && $0.id.contains("sonnet") })?.id
             let defaultHaiku = fetchedModels.first(where: { $0.available && $0.id.contains("haiku") })?.id
+            // OpenAI equivalents: gpt-4o ≈ sonnet (actions), gpt-4o-mini ≈ haiku (summary/ask)
+            let defaultGpt4o = fetchedModels.first(where: { $0.available && $0.id == "gpt-4o" })?.id
+            let defaultGpt4oMini = fetchedModels.first(where: { $0.available && $0.id == "gpt-4o-mini" })?.id
             let defaultModel = fetchedModels.first(where: { $0.available })?.id ?? ""
-            actionsModel = settings.actionsModel ?? settings.selectedModel ?? defaultSonnet ?? defaultModel
-            summaryModel = settings.summaryModel ?? defaultHaiku ?? defaultModel
-            askModel = settings.askModel ?? settings.selectedModel ?? defaultHaiku ?? defaultModel
+            actionsModel = settings.actionsModel ?? settings.selectedModel ?? defaultSonnet ?? defaultGpt4o ?? defaultModel
+            summaryModel = settings.summaryModel ?? defaultHaiku ?? defaultGpt4oMini ?? defaultModel
+            askModel = settings.askModel ?? settings.selectedModel ?? defaultHaiku ?? defaultGpt4oMini ?? defaultModel
         } catch {
             loadFailed = true
         }

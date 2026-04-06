@@ -230,13 +230,20 @@ export async function updateMetadata(config: LLMConfig, options: MetadataOptions
   const today = now.toISOString().split('T')[0];
   const db = await getPglite();
 
+  // Run action extraction first (tasks + events) — these are higher priority
+  if (!options.skipActions && chats.length > 0) {
+    await updateActions(config, chats);
+  }
+
   let totalSummaries = 0;
 
   if (chats.length === 0) {
     console.log('[metadata] No chats with new messages to summarize.');
   } else {
     console.log(`[metadata] Summarizing ${chats.length} chat(s)...`);
-    const SUMMARY_CONCURRENCY = 5;
+    // OpenAI has tighter rate limits on lower tiers — use lower concurrency
+    const isOpenAI = !config.anthropicApiKey;
+    const SUMMARY_CONCURRENCY = isOpenAI ? 1 : 5;
     let completed = 0;
 
     for (let batchStart = 0; batchStart < chats.length; batchStart += SUMMARY_CONCURRENCY) {
@@ -283,11 +290,6 @@ Respond with ONLY the summary text. No JSON, no markdown, no explanation.`,
         }
       }
     }
-  }
-
-  // Run action extraction on the same set of chats
-  if (!options.skipActions && chats.length > 0) {
-    await updateActions(config, chats);
   }
 
   // Only advance the timestamp if at least one summary succeeded —
@@ -489,25 +491,46 @@ Respond with ONLY valid JSON:
 
 DATES: Use timezone ${ctx.tzOffset} (not UTC "Z"). All-day events use noon: "YYYY-MM-DDT12:00:00${ctx.tzOffset}". Empty list if nothing to extract. No markdown fencing.`;
 
-  const actionsModel = config.actionsModel ?? (config.anthropicApiKey ? 'claude-sonnet-4-6' : 'gpt-4o');
   const parsed = await callLLMJSON<{ events: { message_id: number; title: string; date: string | null; location: string | null }[] }>(
     config,
     systemPrompt,
     `=== Chat with ${chat.chatName} ===\n${msgLines}${existingBlock}`,
     512,
-    actionsModel
+    config.actionsModel ?? config.model
   );
+
+  // Guard against malformed LLM response
+  if (!Array.isArray(parsed.events)) {
+    console.warn(`  [events] ${index + 1}/${total} "${chat.chatName}" — LLM returned no events array, skipping.`);
+    return [];
+  }
+
+  console.log(`  [events] ${index + 1}/${total} "${chat.chatName}" — LLM returned ${parsed.events.length} event(s)`);
 
   // Hard filter: drop any events the LLM returned with past dates
   const todayStart = new Date(`${ctx.todayDate}T00:00:00`);
   const futureEvents = parsed.events.filter((e) => {
-    if (!e.date) return false; // events must have a date
+    if (!e.date) {
+      console.log(`    ✗ dropped (no date): "${e.title}"`);
+      return false;
+    }
     const eventDate = new Date(e.date);
-    return !isNaN(eventDate.getTime()) && eventDate >= todayStart;
+    if (isNaN(eventDate.getTime())) {
+      console.log(`    ✗ dropped (invalid date "${e.date}"): "${e.title}"`);
+      return false;
+    }
+    if (eventDate < todayStart) {
+      console.log(`    ✗ dropped (past ${e.date}): "${e.title}"`);
+      return false;
+    }
+    return true;
   });
 
   for (const event of futureEvents) {
-    console.log(`  [events] ${index + 1}/${total} "${chat.chatName}" → ${event.title}`);
+    console.log(`    ✓ [events] "${chat.chatName}" → ${event.title} (${event.date})`);
+  }
+  if (parsed.events.length > 0 && futureEvents.length === 0) {
+    console.log(`    [events] All ${parsed.events.length} event(s) filtered out for "${chat.chatName}"`);
   }
   return futureEvents;
 }
@@ -590,14 +613,18 @@ FIELDS:
 - trigger_hint: What event would make a future task relevant sooner. null if not applicable.
 Empty list if nothing to extract. No markdown fencing.`;
 
-  const actionsModel = config.actionsModel ?? (config.anthropicApiKey ? 'claude-sonnet-4-6' : 'gpt-4o');
   const parsed = await callLLMJSON<{ tasks: { message_id: number; title: string; date: string | null; priority: string; type: string; trigger_hint: string | null }[] }>(
     config,
     systemPrompt,
     `=== Chat with ${chat.chatName} ===\nMessages labeled "Me" are from the user. Messages labeled with other names are from contacts.\n\n${msgLines}${existingBlock}`,
     512,
-    actionsModel
+    config.actionsModel ?? config.model
   );
+  // Guard against malformed LLM response
+  if (!Array.isArray(parsed.tasks)) {
+    console.warn(`  [tasks] ${index + 1}/${total} "${chat.chatName}" — LLM returned no tasks array, skipping.`);
+    return [];
+  }
   for (const task of parsed.tasks) {
     const type = task.type === 'waiting' ? 'waiting' : 'action';
     const priority = task.priority === 'high' ? 'high' : 'low';
@@ -634,7 +661,8 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
 
   let totalNew = 0;
   const allChats = [...olderChats, ...recentChats];
-  const CONCURRENCY = 5;
+  const isOpenAI = !config.anthropicApiKey;
+  const CONCURRENCY = isOpenAI ? 1 : 5;
 
   // Process chats in parallel batches
   for (let batchStart = 0; batchStart < allChats.length; batchStart += CONCURRENCY) {
@@ -667,8 +695,8 @@ export async function updateActions(config: LLMConfig, chats: ChatMessages[]): P
 
     // Run LLM extraction in parallel
     const batchResults = await Promise.allSettled(batchContext.map(async ({ chat, i, isRecent }) => {
-      const events = await extractEvents(config, chat, i, allChats.length, ctx);
       const tasks = isRecent ? await extractTasks(config, chat, i, allChats.length, ctx) : [];
+      const events = await extractEvents(config, chat, i, allChats.length, ctx);
       return { events, tasks };
     }));
 

@@ -66,12 +66,7 @@ const MODEL_DEFAULTS: Record<string, string> = {
   ask: 'claude-haiku-4-5-20251001',
 };
 
-async function getLLMConfig(purpose: 'actions' | 'summary' | 'ask' = 'summary') {
-  // If no keys yet, give the client a chance to push them
-  if (!settings.anthropicApiKey && !settings.openaiApiKey) {
-    await waitForApiKeys(10000);
-  }
-
+function resolveModel(purpose: 'actions' | 'summary' | 'ask'): string {
   const modelSetting = purpose === 'actions' ? settings.actionsModel
     : purpose === 'ask' ? settings.askModel
     : settings.summaryModel;
@@ -85,13 +80,21 @@ async function getLLMConfig(purpose: 'actions' | 'summary' | 'ask' = 'summary') 
     if (settings.anthropicApiKey) {
       model = MODEL_DEFAULTS[purpose];
     } else if (settings.openaiApiKey) {
-      model = 'gpt-4o-mini';
+      model = purpose === 'actions' ? 'gpt-4o' : 'gpt-4o-mini';
     }
+  }
+  return model;
+}
+
+async function getLLMConfig(purpose: 'actions' | 'summary' | 'ask' = 'summary') {
+  // If no keys yet, give the client a chance to push them
+  if (!settings.anthropicApiKey && !settings.openaiApiKey) {
+    await waitForApiKeys(60000);
   }
 
   return {
-    model,
-    actionsModel: settings.actionsModel,
+    model: resolveModel(purpose),
+    actionsModel: resolveModel('actions'),
     anthropicApiKey: settings.anthropicApiKey,
     openaiApiKey: settings.openaiApiKey,
   };
@@ -460,6 +463,7 @@ async function handlePutSettings(
   req: http.IncomingMessage,
   res: http.ServerResponse
 ): Promise<void> {
+  clientHasConnected = true;
   const body = await readBody(req);
   let update: Partial<AppSettings>;
   try {
@@ -943,8 +947,7 @@ const server = http.createServer(async (req, res) => {
 
     // GET routes
     switch (url.pathname) {
-      case '/health':
-        clientHasConnected = true;
+      case '/health': {
         const embProgress = getEmbeddingProgress();
         const apiKeyErr = getApiKeyError();
         jsonResponse(res, {
@@ -957,6 +960,7 @@ const server = http.createServer(async (req, res) => {
           apiKeyError: apiKeyErr ? { provider: apiKeyErr.provider, message: apiKeyErr.message } : undefined,
         });
         break;
+      }
       case '/api/data-range': {
         try {
           const db = await getPglite();
