@@ -78,7 +78,7 @@ final class ServerManager: ObservableObject {
         // Listen for connection failures from APIClient and auto-restart
         if connectionLostObserver == nil {
             connectionLostObserver = NotificationCenter.default.addObserver(
-                forName: .serverConnectionLost, object: nil, queue: .main
+                forName: serverConnectionLostNotification, object: nil, queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
                 Task { @MainActor in self.restartIfNeeded() }

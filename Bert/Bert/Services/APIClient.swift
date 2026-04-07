@@ -1,8 +1,6 @@
 import Foundation
 
-extension Notification.Name {
-    static let serverConnectionLost = Notification.Name("serverConnectionLost")
-}
+let serverConnectionLostNotification = Notification.Name("serverConnectionLost")
 
 actor APIClient {
     private let baseURL = URL(string: "http://localhost:11488")!
@@ -14,12 +12,12 @@ actor APIClient {
     }
 
     /// Check if an error is a connection failure (server unreachable/crashed).
+    /// Excludes timeouts — those mean the server is alive but slow.
     private nonisolated func isConnectionError(_ error: Error) -> Bool {
         let nsError = error as NSError
         return nsError.domain == NSURLErrorDomain && [
             NSURLErrorCannotConnectToHost,
             NSURLErrorNetworkConnectionLost,
-            NSURLErrorTimedOut,
             NSURLErrorCannotFindHost,
         ].contains(nsError.code)
     }
@@ -27,7 +25,7 @@ actor APIClient {
     /// Notify ServerManager that the server appears to be down.
     private nonisolated func notifyConnectionLost() {
         DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .serverConnectionLost, object: nil)
+            NotificationCenter.default.post(name: serverConnectionLostNotification, object: nil)
         }
     }
 
