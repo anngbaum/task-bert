@@ -22,6 +22,8 @@ struct SettingsView: View {
     @State private var anthropicKeyError: String? = nil
     @State private var openaiKeyError: String? = nil
     @State private var isValidating: Bool = false
+    @State private var revealAnthropicKey: Bool = false
+    @State private var revealOpenaiKey: Bool = false
 
     private var availableModels: [APIClient.ModelOption] {
         models.filter { $0.available }
@@ -73,6 +75,7 @@ struct SettingsView: View {
                             maskedKey: maskedAnthropicKey,
                             helpText: "console.anthropic.com",
                             keyError: anthropicKeyError,
+                            isRevealed: $revealAnthropicKey,
                             onRemove: {
                                 Task { await removeKey(provider: "anthropic") }
                             }
@@ -85,6 +88,7 @@ struct SettingsView: View {
                             maskedKey: maskedOpenaiKey,
                             helpText: "platform.openai.com",
                             keyError: openaiKeyError,
+                            isRevealed: $revealOpenaiKey,
                             onRemove: {
                                 Task { await removeKey(provider: "openai") }
                             }
@@ -206,6 +210,7 @@ struct SettingsView: View {
         maskedKey: String?,
         helpText: String,
         keyError: String?,
+        isRevealed: Binding<Bool>,
         onRemove: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -213,8 +218,23 @@ struct SettingsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            SecureField(placeholder, text: input)
-                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 6) {
+                if isRevealed.wrappedValue {
+                    TextField(placeholder, text: input)
+                        .textFieldStyle(.roundedBorder)
+                } else {
+                    SecureField(placeholder, text: input)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                Button {
+                    isRevealed.wrappedValue.toggle()
+                } label: {
+                    Image(systemName: isRevealed.wrappedValue ? "eye.slash" : "eye")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
 
             if let error = keyError {
                 Text(error)

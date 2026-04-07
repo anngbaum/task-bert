@@ -40,7 +40,7 @@ struct TaskItem: Identifiable, Decodable {
     var resolvedBucket: String {
         if let bucket { return bucket }
         if type == "waiting" { return "waiting" }
-        if type == "action", let date, date > Date() { return "upcoming" }
+        if type == "action", let date, date > Calendar.current.startOfDay(for: Date()).addingTimeInterval(86400) { return "upcoming" }
         return "todo"
     }
 }

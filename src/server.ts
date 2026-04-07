@@ -1083,7 +1083,7 @@ const server = http.createServer(async (req, res) => {
           `SELECT t.*, ${chatNameExpr} as chat_name,
              CASE
                WHEN t.type = 'waiting' THEN 'waiting'
-               WHEN t.type = 'action' AND t.date IS NOT NULL AND t.date > NOW() THEN 'upcoming'
+               WHEN t.type = 'action' AND t.date IS NOT NULL AND t.date > CURRENT_DATE + INTERVAL '1 day' THEN 'upcoming'
                ELSE 'todo'
              END as bucket
            FROM tasks t
@@ -1092,7 +1092,7 @@ const server = http.createServer(async (req, res) => {
            ORDER BY
              CASE
                WHEN t.type = 'waiting' THEN 2
-               WHEN t.type = 'action' AND t.date IS NOT NULL AND t.date > NOW() THEN 1
+               WHEN t.type = 'action' AND t.date IS NOT NULL AND t.date > CURRENT_DATE + INTERVAL '1 day' THEN 1
                ELSE 0
              END,
              CASE t.priority WHEN 'high' THEN 0 ELSE 1 END,

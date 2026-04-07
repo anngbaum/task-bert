@@ -205,14 +205,17 @@ async function callLLMOnce(
  * Returns null on success, or an error message string on failure.
  */
 export async function validateApiKey(provider: 'anthropic' | 'openai', apiKey: string): Promise<string | null> {
+  console.log(`[validate-key] Validating ${provider} key (${apiKey.length} chars, prefix: ${apiKey.slice(0, 8)}...)`);
   // Strip non-ASCII characters (smart quotes, ellipses, etc.) that can sneak in from rich-text paste
   const cleanKey = apiKey.replace(/[^\x20-\x7E]/g, '').trim();
   if (cleanKey !== apiKey.trim()) {
+    console.log(`[validate-key] Key contains non-ASCII characters`);
     return 'API key contains invalid characters — try pasting it from a plain text source.';
   }
   try {
     if (provider === 'anthropic') {
       const client = new Anthropic({ apiKey });
+      console.log(`[validate-key] Calling Anthropic API with model claude-haiku-4-5-20251001...`);
       await client.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1,
@@ -220,6 +223,7 @@ export async function validateApiKey(provider: 'anthropic' | 'openai', apiKey: s
       });
     } else {
       const client = new OpenAI({ apiKey });
+      console.log(`[validate-key] Calling OpenAI API with model gpt-4o-mini...`);
       await client.chat.completions.create({
         model: 'gpt-4o-mini',
         max_tokens: 1,
@@ -227,6 +231,7 @@ export async function validateApiKey(provider: 'anthropic' | 'openai', apiKey: s
       });
     }
     // If we get here, the key works — clear any stored error for this provider
+    console.log(`[validate-key] ${provider} key validated successfully`);
     if (lastApiKeyError?.provider === provider) {
       lastApiKeyError = null;
     }
@@ -234,6 +239,7 @@ export async function validateApiKey(provider: 'anthropic' | 'openai', apiKey: s
   } catch (err) {
     const status = (err as any).status ?? (err as any).statusCode;
     const msg = (err as any).message ?? 'Unknown error';
+    console.error(`[validate-key] ${provider} validation failed — status: ${status}, message: ${String(msg).slice(0, 200)}`);
     if (status === 401 || status === 403 || isAuthError(err)) {
       return 'Invalid API key';
     }

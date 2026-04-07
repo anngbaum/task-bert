@@ -405,14 +405,25 @@ async function callLLMJSON<T>(
   maxTokens: number,
   model: string,
   retries = 2,
+  label?: string,
 ): Promise<T> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const text = await callLLM(config, systemPrompt, userPrompt, maxTokens, model);
-      return parseJSON<T>(text);
+      if (label) {
+        console.log(`  [${label}] Raw LLM response (model=${model}, attempt=${attempt + 1}, ${text.length} chars):\n    ${text.replace(/\n/g, '\n    ')}`);
+      }
+      const parsed = parseJSON<T>(text);
+      if (label) {
+        console.log(`  [${label}] Parsed JSON keys: ${typeof parsed === 'object' && parsed ? Object.keys(parsed).join(', ') : typeof parsed}`);
+      }
+      return parsed;
     } catch (err) {
       lastError = err as Error;
+      if (label) {
+        console.error(`  [${label}] Attempt ${attempt + 1} error: ${lastError.message}`);
+      }
       if (attempt < retries) {
         const delay = 1000 * (attempt + 1);
         console.warn(`  [retry] Attempt ${attempt + 1} failed (${lastError.message}), retrying in ${delay}ms...`);
@@ -496,7 +507,9 @@ DATES: Use timezone ${ctx.tzOffset} (not UTC "Z"). All-day events use noon: "YYY
     systemPrompt,
     `=== Chat with ${chat.chatName} ===\n${msgLines}${existingBlock}`,
     512,
-    config.actionsModel ?? config.model
+    config.actionsModel ?? config.model,
+    2,
+    `events:${chat.chatName}`,
   );
 
   // Guard against malformed LLM response
@@ -567,16 +580,21 @@ async function extractTasks(
 
   const msgLines = chat.messages.map((m) => `[MSG-${m.id}] [${m.date}] ${m.sender}: ${m.text}`).join('\n');
 
+  const taskLabel = `tasks:${chat.chatName}`;
+  console.log(`  [${taskLabel}] Sending ${chat.messages.length} messages (${msgLines.length} chars) to model=${config.actionsModel ?? config.model}`);
+  if (existingBlock) {
+    console.log(`  [${taskLabel}] Existing context: ${existingTasks.length} pending, ${completedTasks.length} completed`);
+  }
+
   const systemPrompt = `Extract tasks for "Me" (the user) from this iMessage conversation. Today is ${ctx.today}.
 
 Only create tasks where Me has a clear obligation or someone is clearly waiting on Me. When in doubt, don't create a task.
 
 ## WHAT TO EXTRACT
 
-1. **Unanswered questions** — Someone asked Me a direct, specific question and Me has NOT replied.
-   - Asked before ${ctx.twentyFourHoursAgo} → type: "action", priority: "high"
-   - Asked before ${ctx.twelveHoursAgo} → type: "action", priority: "low"
-   - Asked less than 12h ago → skip (too soon)
+1. **Unanswered questions / invitations** — Someone asked Me a direct question, made a proposal, or invited Me to something and Me has NOT replied.
+   - Time-sensitive or direct ("Do you want to meet up this afternoon?") → type: "action", priority: "high"
+   - Open-ended or low-urgency ("Would love to get your thoughts on that book") → type: "action", priority: "low"
 
 2. **Unfulfilled commitments** — Me explicitly agreed or offered to do something and hasn't done it yet.
    → type: "action", priority: "high"
@@ -598,6 +616,26 @@ Only create tasks where Me has a clear obligation or someone is clearly waiting 
 - Venmo requests or automated payment notifications
 - Anything with a date before ${ctx.today}
 
+## EXAMPLES
+
+Input:
+[MSG-101] [Mon Apr 7, 8:15 AM] Sarah: Hey do you want to grab dinner tonight?
+[MSG-102] [Mon Apr 7, 9:00 AM] Sarah: Also can you send me that doc you mentioned?
+
+Output: two tasks — "Respond to Sarah's dinner invitation tonight" (high, date: tonight) and "Send Sarah the doc she asked about" (high, date: null)
+
+Input:
+[MSG-201] [Sun Apr 6, 2:00 PM] Me: Can you send me the address?
+[MSG-202] [Sun Apr 6, 2:01 PM] Jake: Sure one sec
+
+Output: one task — "Waiting for Jake to send the address" (waiting)
+
+Input:
+[MSG-301] [Mon Apr 7, 10:00 AM] Me: Sounds good, see you there!
+[MSG-302] [Mon Apr 7, 10:01 AM] Lisa: Perfect!
+
+Output: empty list — plans are confirmed, no remaining action
+
 ## OUTPUT
 
 Each message is tagged [MSG-###]. Your response is the COMPLETE list — items you omit will be removed.
@@ -618,17 +656,26 @@ Empty list if nothing to extract. No markdown fencing.`;
     systemPrompt,
     `=== Chat with ${chat.chatName} ===\nMessages labeled "Me" are from the user. Messages labeled with other names are from contacts.\n\n${msgLines}${existingBlock}`,
     512,
-    config.actionsModel ?? config.model
+    config.actionsModel ?? config.model,
+    2,
+    taskLabel,
   );
   // Guard against malformed LLM response
   if (!Array.isArray(parsed.tasks)) {
-    console.warn(`  [tasks] ${index + 1}/${total} "${chat.chatName}" — LLM returned no tasks array, skipping.`);
+    console.warn(`  [${taskLabel}] LLM returned no tasks array (got ${typeof parsed.tasks}: ${JSON.stringify(parsed).slice(0, 300)}), skipping.`);
     return [];
   }
+  console.log(`  [${taskLabel}] ${parsed.tasks.length} task(s) extracted`);
   for (const task of parsed.tasks) {
     const type = task.type === 'waiting' ? 'waiting' : 'action';
     const priority = task.priority === 'high' ? 'high' : 'low';
-    console.log(`  [tasks] ${index + 1}/${total} "${chat.chatName}" → [${type}/${priority}] ${task.title}`);
+    const missing = [
+      !task.message_id && 'message_id',
+      !task.title && 'title',
+      !task.type && 'type',
+      !task.priority && 'priority',
+    ].filter(Boolean);
+    console.log(`  [tasks] ${index + 1}/${total} "${chat.chatName}" → [${type}/${priority}] ${task.title}${missing.length > 0 ? ` (missing fields: ${missing.join(', ')})` : ''}`);
   }
   return parsed.tasks;
 }
