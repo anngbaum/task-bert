@@ -1,5 +1,4 @@
 import http from 'node:http';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
@@ -196,27 +195,7 @@ function saveSettings(settings: AppSettings): void {
 
 let settings = loadSettings();
 
-// --- Bearer token auth ---
-const AUTH_TOKEN = crypto.randomBytes(32).toString('hex');
-const AUTH_TOKEN_PATH = path.join(DATA_DIR, 'auth-token');
-
-function writeAuthToken(): void {
-  const dir = path.dirname(AUTH_TOKEN_PATH);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(AUTH_TOKEN_PATH, AUTH_TOKEN, { mode: 0o600 });
-}
-
-function checkAuth(req: http.IncomingMessage): boolean {
-  const header = req.headers['authorization'];
-  if (!header) return false;
-  const [scheme, token] = header.split(' ');
-  return scheme === 'Bearer' && token === AUTH_TOKEN;
-}
-
-// Write token immediately so clients can read it
-writeAuthToken();
+// Auth removed — server is localhost-only and chat.db is already readable by any local process.
 
 function corsHeaders(): Record<string, string> {
   return {};
@@ -511,14 +490,6 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
   const params = url.searchParams;
-
-  // Allow /health and /api/settings without auth
-  // /health: auth-exempt for startup polling before token is read
-  const authExempt = url.pathname === '/health';
-  if (!authExempt && !checkAuth(req)) {
-    errorResponse(res, 'Unauthorized', 401);
-    return;
-  }
 
   try {
     // PUT routes

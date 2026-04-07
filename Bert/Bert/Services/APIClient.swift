@@ -1,74 +1,62 @@
 import Foundation
 
+extension Notification.Name {
+    static let serverConnectionLost = Notification.Name("serverConnectionLost")
+}
+
 actor APIClient {
     private let baseURL = URL(string: "http://localhost:11488")!
 
-    /// Bearer token read from the server's auth-token file.
-    /// Loaded lazily on first request and cached.
-    private var authToken: String?
-
-    private func loadAuthTokenIfNeeded() {
-        guard authToken == nil else { return }
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let tokenPath = appSupport.appendingPathComponent("Bert/auth-token").path
-        authToken = try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Reset the cached token (call after server restart to pick up new token)
-    func resetAuthToken() {
-        authToken = nil
-    }
-
-    private func authorizedRequest(url: URL, method: String = "GET") -> URLRequest {
-        loadAuthTokenIfNeeded()
+    private func simpleRequest(url: URL, method: String = "GET") -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
-        if let token = authToken {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         return request
     }
 
-    /// GET with auth header. Retries once on 401 with a fresh token.
+    /// Check if an error is a connection failure (server unreachable/crashed).
+    private nonisolated func isConnectionError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && [
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorNetworkConnectionLost,
+            NSURLErrorTimedOut,
+            NSURLErrorCannotFindHost,
+        ].contains(nsError.code)
+    }
+
+    /// Notify ServerManager that the server appears to be down.
+    private nonisolated func notifyConnectionLost() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .serverConnectionLost, object: nil)
+        }
+    }
+
     private func authData(from url: URL) async throws -> (Data, URLResponse) {
-        let request = authorizedRequest(url: url)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
-            authToken = nil
-            let retry = authorizedRequest(url: url)
-            return try await URLSession.shared.data(for: retry)
+        let request = simpleRequest(url: url)
+        do {
+            return try await URLSession.shared.data(for: request)
+        } catch {
+            if isConnectionError(error) { notifyConnectionLost() }
+            throw error
         }
-        return (data, response)
     }
 
-    /// Request with auth header. Retries once on 401 with a fresh token.
     private func authData(for request: URLRequest) async throws -> (Data, URLResponse) {
-        var req = request
-        loadAuthTokenIfNeeded()
-        if let token = authToken {
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        do {
+            return try await URLSession.shared.data(for: request)
+        } catch {
+            if isConnectionError(error) { notifyConnectionLost() }
+            throw error
         }
-        let (data, response) = try await URLSession.shared.data(for: req)
-        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
-            authToken = nil
-            var retry = request
-            loadAuthTokenIfNeeded()
-            if let token = authToken {
-                retry.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            }
-            return try await URLSession.shared.data(for: retry)
-        }
-        return (data, response)
     }
 
-    /// Streaming bytes with auth header
     private func authBytes(for request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse) {
-        var req = request
-        loadAuthTokenIfNeeded()
-        if let token = authToken {
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        do {
+            return try await URLSession.shared.bytes(for: request)
+        } catch {
+            if isConnectionError(error) { notifyConnectionLost() }
+            throw error
         }
-        return try await URLSession.shared.bytes(for: req)
     }
 
     private let decoder: JSONDecoder = {

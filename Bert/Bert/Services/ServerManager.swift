@@ -63,6 +63,8 @@ final class ServerManager: ObservableObject {
         }
     }
 
+    private var connectionLostObserver: Any?
+
     func start() {
         guard state != .running && state != .starting else { return }
 
@@ -73,8 +75,31 @@ final class ServerManager: ObservableObject {
 
         state = .starting
 
+        // Listen for connection failures from APIClient and auto-restart
+        if connectionLostObserver == nil {
+            connectionLostObserver = NotificationCenter.default.addObserver(
+                forName: .serverConnectionLost, object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in self.restartIfNeeded() }
+            }
+        }
+
         // Check if a server is already running on the port (e.g. from npm run serve)
         checkExistingServer()
+    }
+
+    /// Restart the server if it appears to have died.
+    private func restartIfNeeded() {
+        // Only restart if we think we're running — avoid restart loops during startup
+        guard state == .running else { return }
+
+        // Check if our process is still alive
+        if let proc = serverProcess, proc.isRunning { return }
+
+        Self.logger.warning("Server connection lost — restarting...")
+        state = .stopped
+        start()
     }
 
     private func checkExistingServer() {

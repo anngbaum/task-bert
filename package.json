@@ -16,7 +16,8 @@
     "mcp": "tsx src/mcp-server.ts",
     "bundle": "bash scripts/bundle-server.sh",
     "package": "bash scripts/package-app.sh",
-    "reset": "bash scripts/reset.sh"
+    "reset": "bash scripts/reset.sh",
+    "list-downloads": "bash tools/list-downloads.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
