@@ -84,15 +84,22 @@ struct ThreadView: View {
             }
             .listStyle(.plain)
             .onAppear {
-                // Delay slightly to let List finish layout before scrolling
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // Double-pump: first scroll positions the row, second ensures
+                // it lands correctly after List finishes layout.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    proxy.scrollTo(response.anchor_message_id, anchor: .center)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(response.anchor_message_id, anchor: .center)
                     }
                 }
             }
             .onChange(of: response.anchor_message_id) { newAnchor in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    proxy.scrollTo(newAnchor, anchor: .center)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newAnchor, anchor: .center)
                     }
